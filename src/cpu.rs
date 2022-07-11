@@ -3,9 +3,9 @@ use std::thread::sleep;
 use std::time;
 
 use bitvec::prelude::*;
-use byteorder::{LittleEndian, WriteBytesExt};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
-const MEM_SIZE: usize = 1024 * 8;
+const MEM_SIZE: usize = 1024 * 128;
 
 #[derive(Debug)]
 pub struct CPU {
@@ -24,11 +24,13 @@ pub struct CPU {
 
 #[derive(Debug)]
 pub struct Flags {
-    z: bool,
     // zero
-    c: bool,
+    z: bool,
     // CY or carry
+    c: bool,
+    // previous instruction was a subtraction
     n: bool,
+    // todo
     h: bool,
 }
 
@@ -64,22 +66,139 @@ impl CPU {
 
             match instruction {
                 0x00 => self.pc += 1,
+                0x01 => {
+                    // load next 2 bytes in bc
+                    let data: [u8; 2] = self.next_word();
+                    self.bc = data;
+                    self.pc += 1;
+                }
+                0x18 => {
+                    let pos = self.next_byte();
+                    self.pc += pos as u16;
+                }
+                0x1D => {
+                    // decrement E by 1
+                    self.de[1] = self.decrement(self.de[1]);
+                    self.pc += 1;
+                }
                 0x21 => {
                     // load the next word (16 bits) into the HL register
                     let data: [u8; 2] = self.next_word();
                     self.hl = data;
                     self.pc += 1;
                 }
-                0x6f => {
+                0x2C => {
+                    // increment L by 1
+                    self.hl[1] = self.increment(self.hl[1]);
+                    self.pc += 1;
+                }
+                0x2D => {
+                    // decrement L by 1
+                    self.hl[1] = self.decrement(self.hl[1]);
+                    self.pc += 1;
+                }
+                0x2E => {
+                    // set L to next byte
+                    self.hl[1] = self.next_byte();
+                    self.pc += 1;
+                }
+                0x4A => {
+                    // load d to c
+                    self.de[0] = self.bc[1];
+                    self.pc += 1;
+                }
+                0x4B => {
+                    // load c to e
+                    self.bc[1] = self.de[1];
+                    self.pc += 1;
+                }
+                0x4F => {
+                    // load a to c
+                    self.a = self.bc[1];
+                    self.pc += 1;
+                }
+                0x50 => {
+                    // load b to d
+                    self.bc[0] = self.de[0];
+                    self.pc += 1;
+                }
+                0x51 => {
+                    // load c to d
+                    self.bc[1] = self.de[0];
+                    self.pc += 1;
+                }
+                0x52 => {
+                    // load d to d, no-op
+                    self.de[0] = self.de[0];
+                    self.pc += 1;
+                }
+                0x53 => {
+                    // load e to d
+                    self.de[1] = self.de[0];
+                    self.pc += 1;
+                }
+                0x56 => {
+                    // load memory at position hl to d
+                    self.de[0] = self.read_memory_byte(u16::from_le_bytes(self.hl));
+                    self.pc += 1;
+                }
+                0x58 => {
+                    // load b to e
+                    self.bc[0] = self.de[1];
+                    self.pc += 1;
+                }
+                0x5A => {
+                    // load d to e
+                    self.de[0] = self.de[1];
+                    self.pc += 1;
+                }
+                0x5B => {
+                    // load e to e, no-op
+                    self.de[1] = self.de[1];
+                    self.pc += 1;
+                }
+                0x5C => {
+                    // load h to e
+                    self.de[1] = self.hl[0];
+                    self.pc += 1;
+                }
+                0x6B => {
+                    // load h to l
+                    self.de[1] = self.hl[1];
+                    self.pc += 1;
+                }
+                0x6E => {
+                    // load memory at position hl to l
+                    self.hl[1] = self.read_memory_byte(u16::from_le_bytes(self.hl));
+                    self.pc += 1;
+                }
+                0x6F => {
+                    // load a to l
                     self.hl[1] = self.a;
                     self.pc += 1;
                 }
+                0x93 => {
+                    // sub e from a
+                    self.subtract(self.de[1]);
+                    self.pc += 1;
+                }
+                0x94 => {
+                    // sub h from a
+                    self.subtract(self.hl[0]);
+                    self.pc += 1;
+                }
+                0x95 => {
+                    // sub l from a
+                    self.subtract(self.hl[1]);
+                    self.pc += 1;
+                }
                 0x99 => {
-                    let b = self.bc[1];
+                    // subtract c + 1 from a and store in a
+                    let reg_c = self.bc[1];
                     self.flags.n = true;
 
                     let mut overflow = false;
-                    (self.a, overflow) = self.a.overflowing_sub(b);
+                    (self.a, overflow) = self.a.overflowing_sub(reg_c);
                     (self.a, overflow) = self.a.overflowing_sub(1);
                     self.flags.c = overflow;
 
@@ -107,7 +226,7 @@ impl CPU {
                 }
             }
 
-            sleep(time::Duration::from_millis(100));
+            sleep(time::Duration::from_millis(25));
         }
     }
 
@@ -130,6 +249,44 @@ impl CPU {
 
         self.memory.set_position(self.sp as u64);
         self.memory.write_u16::<LittleEndian>(word).unwrap();
+    }
+
+    fn read_memory_byte(&mut self, pos: u16) -> u8 {
+        self.memory.set_position(pos as u64);
+        self.memory.read_u8().unwrap()
+    }
+
+    /** add 1 to byte, does not set carry flag */
+    fn increment(&mut self, byte: u8) -> u8 {
+        self.flags.h = (byte & 0xF) == 0xF;
+        let byte = byte + 1;
+        self.flags.z = byte == 0;
+        self.flags.n = false;
+
+        byte
+    }
+
+    /** subtract 1 from byte, does not set carry flag */
+    fn decrement(&mut self, byte: u8) -> u8 {
+        let byte = byte - 1;
+        self.flags.z = byte == 0;
+        self.flags.n = true;
+        self.flags.h = (byte & 0xF) == 0xF;
+
+        byte
+    }
+
+    /** subtract byte from register A */
+    fn subtract(&mut self, byte: u8) {
+        self.carry_check(byte);
+        (self.a, _) = self.a.overflowing_sub(byte);
+    }
+
+    fn carry_check(&mut self, byte: u8) {
+        self.flags.z = byte == 0; // A - A = 0
+        self.flags.h = (byte & 0xF) == 0xF;
+        self.flags.n = true;
+        self.flags.c = self.a < byte
     }
 
     fn debug_registers(&self)
