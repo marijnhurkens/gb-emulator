@@ -1,3 +1,5 @@
+extern crate core;
+
 mod cpu;
 
 use std::ffi::OsString;
