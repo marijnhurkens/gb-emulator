@@ -1,12 +1,14 @@
 extern crate core;
 
 mod cpu;
+mod cartridge;
 
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::Read;
 use clap::Parser;
-use crate::cpu::{Cartridge, CPU};
+use crate::cartridge::Cartridge;
+use crate::cpu::CPU;
 
 #[derive(Parser, Debug)]
 struct Args {

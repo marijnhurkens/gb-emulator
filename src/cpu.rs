@@ -2,8 +2,9 @@ use std::io::Cursor;
 use std::thread::sleep;
 use std::time;
 
-use bitvec::prelude::*;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+
+use crate::cartridge::Cartridge;
 
 const MEM_SIZE: usize = 1024 * 128;
 
@@ -55,13 +56,12 @@ impl CPU {
         }
     }
 
-    pub fn run(&mut self)
-    {
+    pub fn run(&mut self) {
         let title = &self.cartridge.header.title;
         println!("Running {title}");
 
         loop {
-            if  self.pc as usize >= self.cartridge.data.len() {
+            if self.pc as usize >= self.cartridge.data.len() {
                 self.debug_registers();
                 panic!("PC out of bounds");
             }
@@ -103,10 +103,24 @@ impl CPU {
                     self.bc[0] = data;
                     self.pc += 1;
                 }
+                0x07 => {
+                    self.rlca();
+                    self.pc +=1 ;
+                }
                 0x0E => {
                     // load next byte to c
                     let data = self.next_byte();
                     self.bc[1] = data;
+                    self.pc += 1;
+                }
+                0x14 => {
+                    // increment D by 1
+                    self.de[0] = self.increment(self.de[0]);
+                    self.pc += 1;
+                }
+                0x15 => {
+                    // decrement D by 1
+                    self.de[0] = self.decrement(self.de[0]);
                     self.pc += 1;
                 }
                 0x16 => {
@@ -120,14 +134,23 @@ impl CPU {
                     let pos = self.next_byte();
                     self.pc += pos as u16;
                 }
+                0x19 => {
+                    // add DE to HL
+                    self.add_to_reg_hl(self.de);
+                    self.pc += 1;
+                }
                 0x1D => {
                     // decrement E by 1
                     self.de[1] = self.decrement(self.de[1]);
                     self.pc += 1;
                 }
+                0x1F => {
+                    self.rra();
+                    self.pc += 1;
+                }
                 0x20 => {
                     // if z is 0, jump next byte relative steps, otherwise skip next byte
-                    if self.flags.z == false {
+                    if !self.flags.z {
                         let current_addr = self.pc; // store because next_byte increases pc
                         self.pc = current_addr + self.next_byte() as u16;
                     } else {
@@ -138,6 +161,21 @@ impl CPU {
                     // load the next word (16 bits) into the HL register
                     let data: [u8; 2] = self.next_word();
                     self.hl = data;
+                    self.pc += 1;
+                }
+                0x24 => {
+                    // increment H by 1
+                    self.hl[0] = self.increment(self.hl[0]);
+                    self.pc += 1;
+                }
+                0x25 => {
+                    // decrement H by 1
+                    self.hl[0] = self.decrement(self.hl[0]);
+                    self.pc += 1;
+                }
+                0x29 => {
+                    // Add HL to HL
+                    self.add_to_reg_hl(self.hl);
                     self.pc += 1;
                 }
                 0x2C => {
@@ -164,7 +202,7 @@ impl CPU {
                     // store a in location of hl, and decrement hl
                     let hl_u16 = u16::from_le_bytes(self.hl);
                     self.write_memory_byte(hl_u16, self.a);
-                    self.hl = (hl_u16-1).to_le_bytes();
+                    self.hl = (hl_u16 - 1).to_le_bytes();
                     self.pc += 1;
                 }
                 0x4A => {
@@ -234,7 +272,7 @@ impl CPU {
                 }
                 0x5B => {
                     // load e to e, no-op
-                    self.de[1] = self.de[1];
+                    // self.de[1] = self.de[1];
                     self.pc += 1;
                 }
                 0x5C => {
@@ -260,6 +298,15 @@ impl CPU {
                 0x6F => {
                     // load a to l
                     self.hl[1] = self.a;
+                    self.pc += 1;
+                }
+                0x77 => {
+                    self.write_memory_byte(u16::from_le_bytes(self.hl), self.a);
+                    self.pc += 1;
+                }
+                0x7B => {
+                    // load e to a
+                    self.a = self.de[1];
                     self.pc += 1;
                 }
                 0x93 => {
@@ -292,7 +339,17 @@ impl CPU {
                 }
                 0xAF => {
                     // XOR the A register with itself
-                    self.a = self.a ^ self.a;
+                    self.a ^= self.a;
+                    self.pc += 1;
+                }
+                0xB0 => {
+                    // XOR B with A and store in A
+                    self.a ^= self.bc[0];
+                    self.pc += 1;
+                }
+                0xBF => {
+                    // compare A with A, set flags
+                    self.compare_a(self.a);
                     self.pc += 1;
                 }
                 0xC3 => {
@@ -312,7 +369,7 @@ impl CPU {
                 }
                 _ => {
                     self.debug_registers();
-                    panic!("Unknown instruction {:#04x}", instruction)
+                    panic!("Unknown instruction {:#04X}", instruction)
                 }
             }
 
@@ -321,15 +378,13 @@ impl CPU {
     }
 
     /** Increments program counter */
-    fn next_byte(&mut self) -> u8
-    {
+    fn next_byte(&mut self) -> u8 {
         self.pc += 1;
         self.cartridge.data[self.pc as usize]
     }
 
     /** Increments program counter twice */
-    fn next_word(&mut self) -> [u8; 2]
-    {
+    fn next_word(&mut self) -> [u8; 2] {
         let a = self.next_byte();
         let b = self.next_byte();
 
@@ -356,7 +411,7 @@ impl CPU {
     /** add 1 to byte, does not set carry flag */
     fn increment(&mut self, byte: u8) -> u8 {
         self.flags.h = (byte & 0xF) == 0xF;
-        let (byte,_) = byte.overflowing_add(1);
+        let (byte, _) = byte.overflowing_add(1);
         self.flags.z = byte == 0;
         self.flags.n = false;
 
@@ -365,7 +420,7 @@ impl CPU {
 
     /** subtract 1 from byte, does not set carry flag */
     fn decrement(&mut self, byte: u8) -> u8 {
-        let (byte,_) = byte.overflowing_sub(1);
+        let (byte, _) = byte.overflowing_sub(1);
         self.flags.z = byte == 0;
         self.flags.n = true;
         self.flags.h = (byte & 0xF) == 0xF;
@@ -373,21 +428,61 @@ impl CPU {
         byte
     }
 
+    /**
+     * Add register B to HL
+     */
+    fn add_to_reg_hl(&mut self, b: [u8; 2]) {
+        let hl_u16 = u16::from_le_bytes(self.hl);
+        let b_u16 = u16::from_le_bytes(b);
+        let temp = hl_u16 as u32 + b_u16 as u32;
+        self.flags.n = false;
+        self.flags.c = temp > 0xFFFF;
+        self.flags.h = ((hl_u16 & 0xFFF) + (b_u16 & 0xFFF)) > 0xFFF;
+        self.hl = ((temp ^ 0xFFFF) as u16).to_le_bytes();
+    }
+
     /** subtract byte from register A */
     fn subtract(&mut self, byte: u8) {
-        self.carry_check(byte);
+        self.compare_a(byte);
         (self.a, _) = self.a.overflowing_sub(byte);
     }
 
-    fn carry_check(&mut self, byte: u8) {
-        self.flags.z = byte == 0; // A - A = 0
-        self.flags.h = (byte & 0xF) == 0xF;
+    fn compare_a(&mut self, byte: u8) {
+        self.flags.z = self.a == byte;
         self.flags.n = true;
-        self.flags.c = self.a < byte
+        self.flags.h = (self.a & 0xF) < (byte & 0xF);
+        self.flags.c = self.a < byte;
     }
 
-    fn debug_registers(&self)
-    {
+    /**
+     * Shift A right, placing the rightmost bit in the carry flag. Set the leftmost
+     * bit of A to the old value of the carry flag.
+     */
+    fn rra(&mut self) {
+        let mut byte = self.a;
+        let carry = self.flags.c;
+        self.flags.c = (byte & 0x1) == 0x1;
+        byte >>= 1;
+        if carry {
+            byte |= 0x80;
+        }
+        self.a = byte;
+    }
+
+    /**
+     * Shift A left, placing the leftmost bit (bit 7) in the carry flag and bit 0 of A.
+     */
+    fn rlca(&mut self) {
+        let mut byte = self.a;
+        self.flags.c = (byte & 0xF) == 0x1;
+        byte <<= 1;
+        if self.flags.c {
+            byte |= 0x01;
+        }
+        self.a = byte;
+    }
+
+    fn debug_registers(&self) {
         println!("Program counter: {:x}", self.pc);
         println!("Stack pointer: {:x}", self.sp);
         println!("A: {:x}", self.a);
@@ -395,69 +490,5 @@ impl CPU {
         println!("DE: {:x} {:x}", self.de[0], self.de[1]);
         println!("HL: {:x} {:x}", self.hl[0], self.hl[1]);
         println!("Flags: {:?}", self.flags);
-    }
-}
-
-
-#[derive(Debug)]
-pub struct Cartridge {
-    pub header: CartridgeHeader,
-    pub data: Vec<u8>,
-}
-
-#[derive(Debug)]
-pub struct CartridgeHeader {
-    pub title: String,
-    pub cartridge_type: u8,
-    pub licensee_code: u8,
-    pub rom_size: u8,
-    pub ram_size: u8,
-}
-
-
-impl Cartridge {
-    pub fn load_rom(data: Vec<u8>) -> Self {
-        verify_header(&data).unwrap();
-
-        let header = load_header(&data);
-
-        Cartridge {
-            header,
-            data,
-        }
-    }
-}
-
-
-fn load_header(data: &[u8]) -> CartridgeHeader {
-    let title = &data[0x0134..=0x0143];
-    let cartridge_type = data[0x0147];
-    let rom_size = data[0x0148];
-    let ram_size = data[0x0149];
-    let licensee_code = data[0x014B];
-
-    CartridgeHeader {
-        title: String::from_utf8(title.to_vec()).unwrap(),
-        cartridge_type,
-        rom_size,
-        ram_size,
-        licensee_code,
-    }
-}
-
-fn verify_header(data: &[u8]) -> Result<(), &str>
-{
-    let checksum = &data[0x014D];
-    println!("Verifying header checksum..");
-    let mut x: u8 = 0;
-
-    for i in 0x0134..=0x014C {
-        x = x.overflowing_sub(data[i]).0.overflowing_sub(1).0;
-    }
-
-    if x == *checksum {
-        Ok(())
-    } else {
-        Err("Header checksum not valid.")
     }
 }
