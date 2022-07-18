@@ -67,7 +67,7 @@ impl CPU {
             }
 
             let instruction = self.cartridge.data[self.pc as usize];
-            println!("{:X} | {:#04X}", self.pc, instruction);
+            print!("{:#08X} | {:#04X} | ", self.pc, instruction);
 
             match instruction {
                 0x00 => self.pc += 1,
@@ -105,12 +105,38 @@ impl CPU {
                 }
                 0x07 => {
                     self.rlca();
-                    self.pc +=1 ;
+                    self.pc += 1;
+                }
+                0x08 => {
+                    // write stack pointer to memory at next word location
+                    let pos = u16::from_le_bytes(self.next_word());
+                    self.write_memory_word(pos, self.sp);
+                    self.pc += 1;
+                }
+                0x0A => {
+                    // load memory at address BC into A
+                    self.a = self.read_memory_byte(u16::from_le_bytes(self.bc));
+                    self.pc += 1;
+                }
+                0x0C => {
+                    // increment C by 1
+                    self.bc[1] = self.increment(self.bc[1]);
+                    self.pc += 1;
+                }
+                0x0D => {
+                    // decrement C by 1
+                    self.bc[1] = self.decrement(self.bc[1]);
+                    self.pc += 1;
                 }
                 0x0E => {
                     // load next byte to c
                     let data = self.next_byte();
                     self.bc[1] = data;
+                    self.pc += 1;
+                }
+                0x11 => {
+                    // load next word into DE
+                    self.de = self.next_word();
                     self.pc += 1;
                 }
                 0x14 => {
@@ -144,6 +170,10 @@ impl CPU {
                     self.de[1] = self.decrement(self.de[1]);
                     self.pc += 1;
                 }
+                0x1E => {
+                    self.de[1] = self.next_byte();
+                    self.pc += 1;
+                }
                 0x1F => {
                     self.rra();
                     self.pc += 1;
@@ -151,9 +181,14 @@ impl CPU {
                 0x20 => {
                     // if z is 0, jump next byte relative steps, otherwise skip next byte
                     if !self.flags.z {
-                        let current_addr = self.pc; // store because next_byte increases pc
-                        self.pc = current_addr + self.next_byte() as u16;
+                        //let current_addr = self.pc; // store because next_byte increases pc
+                        //let new_addr = current_addr + self.next_byte() as u16 + 2;
+                        let data = self.next_byte();
+                        self.relative_jump(data);
+                        self.pc +=1 ;
+                        print!("JR NZ, s8 | Jump to {:X}", self.pc);
                     } else {
+                        print!("JR NZ, s8 | Skip");
                         self.pc += 2; // skip data
                     }
                 }
@@ -161,6 +196,17 @@ impl CPU {
                     // load the next word (16 bits) into the HL register
                     let data: [u8; 2] = self.next_word();
                     self.hl = data;
+                    self.pc += 1;
+                }
+                0x22 => {
+                    // write value of A to memory location HL and increment HL
+                    self.write_memory_byte(u16::from_le_bytes(self.hl), self.a);
+                    self.hl = (u16::from_le_bytes(self.hl) + 1).to_le_bytes();
+                    self.pc += 1;
+                }
+                0x23 => {
+                    // increment HL by 1
+                    self.hl = (u16::from_le_bytes(self.hl) + 1).to_le_bytes();
                     self.pc += 1;
                 }
                 0x24 => {
@@ -172,6 +218,20 @@ impl CPU {
                     // decrement H by 1
                     self.hl[0] = self.decrement(self.hl[0]);
                     self.pc += 1;
+                }
+                0x28 => {
+                    // if z is 1, jump next byte relative steps, otherwise skip next byte
+                    if self.flags.z {
+                        // let current_addr = self.pc; // store because next_byte increases pc
+                        // let new_addr = current_addr + self.next_byte() as u16 + 2;
+                        let data = self.next_byte();
+                        self.relative_jump(data);
+                        self.pc +=1 ;
+                        print!("JR Z, s8 | Jump to {:X}", self.pc);
+                    } else {
+                        print!("JR Z, s8 | Skip");
+                        self.pc += 2; // skip data
+                    }
                 }
                 0x29 => {
                     // Add HL to HL
@@ -198,11 +258,24 @@ impl CPU {
                     self.a = !self.a;
                     self.pc += 1;
                 }
+                0x31 => {
+                    self.sp = u16::from_le_bytes(self.next_word());
+                    self.pc += 1;
+                }
                 0x32 => {
                     // store a in location of hl, and decrement hl
                     let hl_u16 = u16::from_le_bytes(self.hl);
                     self.write_memory_byte(hl_u16, self.a);
                     self.hl = (hl_u16 - 1).to_le_bytes();
+                    self.pc += 1;
+                }
+                0x3E => {
+                    // Load next byte to A
+                    self.a = self.next_byte();
+                    self.pc += 1;
+                }
+                0x41 => {
+                    self.bc[0] = self.bc[1];
                     self.pc += 1;
                 }
                 0x4A => {
@@ -247,7 +320,7 @@ impl CPU {
                 }
                 0x52 => {
                     // load d to d, no-op
-                    self.de[0] = self.de[0];
+                    //self.de[0] = self.de[0];
                     self.pc += 1;
                 }
                 0x53 => {
@@ -285,6 +358,11 @@ impl CPU {
                     self.bc[0] = self.hl[0];
                     self.pc += 1;
                 }
+                0x67 => {
+                    // load a to h
+                    self.hl[0] = self.a;
+                    self.pc += 1;
+                }
                 0x6B => {
                     // load h to l
                     self.de[1] = self.hl[1];
@@ -307,6 +385,10 @@ impl CPU {
                 0x7B => {
                     // load e to a
                     self.a = self.de[1];
+                    self.pc += 1;
+                }
+                0x8A => {
+                    self.add_to_a_with_carry(self.de[0]);
                     self.pc += 1;
                 }
                 0x93 => {
@@ -337,6 +419,11 @@ impl CPU {
                     self.flags.z = self.a == 0;
                     self.pc += 1;
                 }
+                0xAA => {
+                    // XOR A with D and store in A
+                    self.a ^= self.de[0];
+                    self.pc += 1;
+                }
                 0xAF => {
                     // XOR the A register with itself
                     self.a ^= self.a;
@@ -355,25 +442,77 @@ impl CPU {
                 0xC3 => {
                     // Jump to the address immediately after the current instruction
                     let data: [u8; 2] = self.next_word();
+                    println!("{:X} {:X}", data[0], data[1]);
                     let pos: u16 = u16::from_be_bytes(data); // be because already switched
                     self.pc = pos;
                 }
+                0xC9 => {
+                    // RET - pop word from stack and set PC to that
+                    let address = self.pop_word();
+                    print!("RET | {:#08X}", address);
+                    self.pc = address;
+                }
                 0xCD => {
-                    let address = self.next_word();
+                    // CALL a16 = push PC to stack and jump to next byte
+                    let address = u16::from_le_bytes(self.next_word());
+                    print!("CALL a16 | {:#08X}", address);
                     self.push_word(self.pc);
-                    self.pc = u16::from_le_bytes(address);
+                    self.pc = address;
+                }
+                0xD2 => {
+                    // Jump to address in next word if carry flag is true, or continue
+                    if self.flags.c {
+                        self.pc = u16::from_le_bytes(self.next_word());
+                    } else {
+                        self.pc += 1;
+                    }
+                }
+                0xD6 => {
+                    // subtract net byte from A and saver to A
+                    let data = self.next_byte();
+                    self.subtract(data);
+                    self.pc += 1;
+                }
+                0xE0 => {
+                    // Store A to address at memory 0xFFxx, where xx is the next byte
+                    let data = self.next_byte();
+                    self.write_memory_byte(u16::from_le_bytes([0xff, data]), self.a);
+                    self.pc += 1;
+                }
+                0xF0 => {
+                    // Load address at memory 0xFFxx into A, where xx is the next byte
+                    let data = self.next_byte();
+                    self.a = self.read_memory_byte(u16::from_le_bytes([0xff, data]));
+                    self.pc += 1;
+                }
+                0xF3 => {
+                    self.interrupts_enabled = false;
+                    self.pc += 1;
+                }
+                0xF9 => {
+                    // Load HL to SP
+                    self.sp = u16::from_le_bytes(self.hl);
+                    self.pc += 1;
+                }
+                0xFE => {
+                    // Set Z flag if A and next byte are equal by calculating A - next byte == 0
+                    let data = self.next_byte();
+                    self.compare_a(data);
+                    self.pc += 1;
                 }
                 0xFF => {
                     self.push_word(self.pc);
                     self.pc = self.cartridge.data[0x38] as u16;
                 }
                 _ => {
+                    println!();
                     self.debug_registers();
                     panic!("Unknown instruction {:#04X}", instruction)
                 }
             }
 
-            sleep(time::Duration::from_millis(5));
+            println!();
+            //sleep(time::Duration::from_millis(5));
         }
     }
 
@@ -398,6 +537,15 @@ impl CPU {
         self.memory.write_u16::<LittleEndian>(word).unwrap();
     }
 
+    fn pop_word(&mut self) -> u16 {
+        self.memory.set_position(self.sp as u64);
+        let data = self.memory.read_u16::<LittleEndian>().unwrap();
+
+        self.sp += 2;
+
+        data
+    }
+
     fn read_memory_byte(&mut self, pos: u16) -> u8 {
         self.memory.set_position(pos as u64);
         self.memory.read_u8().unwrap()
@@ -406,6 +554,11 @@ impl CPU {
     fn write_memory_byte(&mut self, pos: u16, byte: u8) {
         self.memory.set_position(pos as u64);
         self.memory.write_u8(byte).unwrap()
+    }
+
+    fn write_memory_word(&mut self, pos: u16, word: u16) {
+        self.memory.set_position(pos as u64);
+        self.memory.write_u16::<LittleEndian>(word).unwrap()
     }
 
     /** add 1 to byte, does not set carry flag */
@@ -426,6 +579,19 @@ impl CPU {
         self.flags.h = (byte & 0xF) == 0xF;
 
         byte
+    }
+
+    fn add_to_a_with_carry(&mut self, byte: u8) {
+        let mut n = self.a as u16 + byte as u16;
+        if self.flags.c {
+            n += 1;
+        }
+
+        self.flags.z = (n & 0xff) == 0;
+        self.flags.h = ((self.a & 0x0F) + (byte & 0x0F)) & 0x10 == 0x10;
+        self.flags.c = n > 0xff;
+        self.flags.n = false;
+        self.a = (n & 0xff) as u8;
     }
 
     /**
@@ -480,6 +646,20 @@ impl CPU {
             byte |= 0x01;
         }
         self.a = byte;
+    }
+
+    fn relative_jump(&mut self, data: u8) {
+        self.pc = self.signed_add(self.pc, data);
+    }
+
+    fn signed_add(&self, a: u16, b: u8) -> u16
+    {
+        let b_signed: i8 = unsafe { std::mem::transmute(b) };
+        if b_signed >= 0 {
+            a + b_signed.abs() as u16
+        } else {
+            a - b_signed.abs() as u16
+        }
     }
 
     fn debug_registers(&self) {
