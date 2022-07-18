@@ -2,6 +2,8 @@ extern crate core;
 
 mod cpu;
 mod cartridge;
+mod helpers;
+mod memory;
 
 use std::ffi::OsString;
 use std::fs::File;

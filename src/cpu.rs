@@ -1,12 +1,15 @@
 use std::io::Cursor;
+use std::ops::Sub;
 use std::thread::sleep;
-use std::time;
+use std::time::{Duration, Instant};
 
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use byteorder::LittleEndian;
 
 use crate::cartridge::Cartridge;
+use crate::helpers::signed_add;
+use crate::memory::Memory;
 
-const MEM_SIZE: usize = 1024 * 128;
+const CPU_FREQ: f64 = 4_194_304.0;
 
 #[derive(Debug)]
 pub struct CPU {
@@ -19,7 +22,7 @@ pub struct CPU {
     hl: [u8; 2],
     flags: Flags,
     interrupts_enabled: bool,
-    memory: Cursor<Vec<u8>>,
+    memory: Memory,
     cartridge: Cartridge,
 }
 
@@ -51,7 +54,7 @@ impl CPU {
                 h: false,
             },
             interrupts_enabled: false,
-            memory: Cursor::new(vec![0x0; MEM_SIZE]),
+            memory: Memory::new(),
             cartridge,
         }
     }
@@ -67,453 +70,608 @@ impl CPU {
             }
 
             let instruction = self.cartridge.data[self.pc as usize];
-            print!("{:#08X} | {:#04X} | ", self.pc, instruction);
 
-            match instruction {
-                0x00 => self.pc += 1,
-                0x01 => {
-                    // load next 2 bytes in bc
-                    let data: [u8; 2] = self.next_word();
-                    self.bc = data;
-                    self.pc += 1;
-                }
-                0x02 => {
-                    // write a to memory on location bc
-                    self.write_memory_byte(u16::from_le_bytes(self.bc), self.a);
-                    self.pc += 1;
-                }
-                0x03 => {
-                    // increment BE by 1
-                    self.bc = (u16::from_le_bytes(self.bc) + 1).to_le_bytes();
-                    self.pc += 1;
-                }
-                0x04 => {
-                    // increment B by 1
-                    self.bc[0] = self.increment(self.bc[0]);
-                    self.pc += 1;
-                }
-                0x05 => {
-                    // decrement B by 1
-                    self.bc[0] = self.decrement(self.bc[0]);
-                    self.pc += 1;
-                }
-                0x06 => {
-                    // load next byte to b
-                    let data = self.next_byte();
-                    self.bc[0] = data;
-                    self.pc += 1;
-                }
-                0x07 => {
-                    self.rlca();
-                    self.pc += 1;
-                }
-                0x08 => {
-                    // write stack pointer to memory at next word location
-                    let pos = u16::from_le_bytes(self.next_word());
-                    self.write_memory_word(pos, self.sp);
-                    self.pc += 1;
-                }
-                0x0A => {
-                    // load memory at address BC into A
-                    self.a = self.read_memory_byte(u16::from_le_bytes(self.bc));
-                    self.pc += 1;
-                }
-                0x0C => {
-                    // increment C by 1
-                    self.bc[1] = self.increment(self.bc[1]);
-                    self.pc += 1;
-                }
-                0x0D => {
-                    // decrement C by 1
-                    self.bc[1] = self.decrement(self.bc[1]);
-                    self.pc += 1;
-                }
-                0x0E => {
-                    // load next byte to c
-                    let data = self.next_byte();
-                    self.bc[1] = data;
-                    self.pc += 1;
-                }
-                0x11 => {
-                    // load next word into DE
-                    self.de = self.next_word();
-                    self.pc += 1;
-                }
-                0x14 => {
-                    // increment D by 1
-                    self.de[0] = self.increment(self.de[0]);
-                    self.pc += 1;
-                }
-                0x15 => {
-                    // decrement D by 1
-                    self.de[0] = self.decrement(self.de[0]);
-                    self.pc += 1;
-                }
-                0x16 => {
-                    // load next byte to d
-                    let data = self.next_byte();
-                    self.de[0] = data;
-                    self.pc += 1;
-                }
-                0x18 => {
-                    // relative jump
-                    let pos = self.next_byte();
-                    self.pc += pos as u16;
-                }
-                0x19 => {
-                    // add DE to HL
-                    self.add_to_reg_hl(self.de);
-                    self.pc += 1;
-                }
-                0x1D => {
-                    // decrement E by 1
-                    self.de[1] = self.decrement(self.de[1]);
-                    self.pc += 1;
-                }
-                0x1E => {
-                    self.de[1] = self.next_byte();
-                    self.pc += 1;
-                }
-                0x1F => {
-                    self.rra();
-                    self.pc += 1;
-                }
-                0x20 => {
-                    // if z is 0, jump next byte relative steps, otherwise skip next byte
-                    if !self.flags.z {
-                        //let current_addr = self.pc; // store because next_byte increases pc
-                        //let new_addr = current_addr + self.next_byte() as u16 + 2;
-                        let data = self.next_byte();
-                        self.relative_jump(data);
-                        self.pc +=1 ;
-                        print!("JR NZ, s8 | Jump to {:X}", self.pc);
-                    } else {
-                        print!("JR NZ, s8 | Skip");
-                        self.pc += 2; // skip data
-                    }
-                }
-                0x21 => {
-                    // load the next word (16 bits) into the HL register
-                    let data: [u8; 2] = self.next_word();
-                    self.hl = data;
-                    self.pc += 1;
-                }
-                0x22 => {
-                    // write value of A to memory location HL and increment HL
-                    self.write_memory_byte(u16::from_le_bytes(self.hl), self.a);
-                    self.hl = (u16::from_le_bytes(self.hl) + 1).to_le_bytes();
-                    self.pc += 1;
-                }
-                0x23 => {
-                    // increment HL by 1
-                    self.hl = (u16::from_le_bytes(self.hl) + 1).to_le_bytes();
-                    self.pc += 1;
-                }
-                0x24 => {
-                    // increment H by 1
-                    self.hl[0] = self.increment(self.hl[0]);
-                    self.pc += 1;
-                }
-                0x25 => {
-                    // decrement H by 1
-                    self.hl[0] = self.decrement(self.hl[0]);
-                    self.pc += 1;
-                }
-                0x28 => {
-                    // if z is 1, jump next byte relative steps, otherwise skip next byte
-                    if self.flags.z {
-                        // let current_addr = self.pc; // store because next_byte increases pc
-                        // let new_addr = current_addr + self.next_byte() as u16 + 2;
-                        let data = self.next_byte();
-                        self.relative_jump(data);
-                        self.pc +=1 ;
-                        print!("JR Z, s8 | Jump to {:X}", self.pc);
-                    } else {
-                        print!("JR Z, s8 | Skip");
-                        self.pc += 2; // skip data
-                    }
-                }
-                0x29 => {
-                    // Add HL to HL
-                    self.add_to_reg_hl(self.hl);
-                    self.pc += 1;
-                }
-                0x2C => {
-                    // increment L by 1
-                    self.hl[1] = self.increment(self.hl[1]);
-                    self.pc += 1;
-                }
-                0x2D => {
-                    // decrement L by 1
-                    self.hl[1] = self.decrement(self.hl[1]);
-                    self.pc += 1;
-                }
-                0x2E => {
-                    // set L to next byte
-                    self.hl[1] = self.next_byte();
-                    self.pc += 1;
-                }
-                0x2F => {
-                    // complement / invert A
-                    self.a = !self.a;
-                    self.pc += 1;
-                }
-                0x31 => {
-                    self.sp = u16::from_le_bytes(self.next_word());
-                    self.pc += 1;
-                }
-                0x32 => {
-                    // store a in location of hl, and decrement hl
-                    let hl_u16 = u16::from_le_bytes(self.hl);
-                    self.write_memory_byte(hl_u16, self.a);
-                    self.hl = (hl_u16 - 1).to_le_bytes();
-                    self.pc += 1;
-                }
-                0x3E => {
-                    // Load next byte to A
-                    self.a = self.next_byte();
-                    self.pc += 1;
-                }
-                0x41 => {
-                    self.bc[0] = self.bc[1];
-                    self.pc += 1;
-                }
-                0x4A => {
-                    // load d to c
-                    self.de[0] = self.bc[1];
-                    self.pc += 1;
-                }
-                0x4B => {
-                    // load c to e
-                    self.bc[1] = self.de[1];
-                    self.pc += 1;
-                }
-                0x4C => {
-                    // load h to c
-                    self.hl[0] = self.bc[1];
-                    self.pc += 1;
-                }
-                0x4D => {
-                    // load l to c
-                    self.hl[1] = self.bc[1];
-                    self.pc += 1;
-                }
-                0x4E => {
-                    // load memory at position hl to c
-                    self.bc[1] = self.read_memory_byte(u16::from_le_bytes(self.hl));
-                    self.pc += 1;
-                }
-                0x4F => {
-                    // load a to c
-                    self.a = self.bc[1];
-                    self.pc += 1;
-                }
-                0x50 => {
-                    // load b to d
-                    self.bc[0] = self.de[0];
-                    self.pc += 1;
-                }
-                0x51 => {
-                    // load c to d
-                    self.bc[1] = self.de[0];
-                    self.pc += 1;
-                }
-                0x52 => {
-                    // load d to d, no-op
-                    //self.de[0] = self.de[0];
-                    self.pc += 1;
-                }
-                0x53 => {
-                    // load e to d
-                    self.de[1] = self.de[0];
-                    self.pc += 1;
-                }
-                0x56 => {
-                    // load memory at position hl to d
-                    self.de[0] = self.read_memory_byte(u16::from_le_bytes(self.hl));
-                    self.pc += 1;
-                }
-                0x58 => {
-                    // load b to e
-                    self.bc[0] = self.de[1];
-                    self.pc += 1;
-                }
-                0x5A => {
-                    // load d to e
-                    self.de[0] = self.de[1];
-                    self.pc += 1;
-                }
-                0x5B => {
-                    // load e to e, no-op
-                    // self.de[1] = self.de[1];
-                    self.pc += 1;
-                }
-                0x5C => {
-                    // load h to e
-                    self.de[1] = self.hl[0];
-                    self.pc += 1;
-                }
-                0x60 => {
-                    // load b to h
-                    self.bc[0] = self.hl[0];
-                    self.pc += 1;
-                }
-                0x67 => {
-                    // load a to h
-                    self.hl[0] = self.a;
-                    self.pc += 1;
-                }
-                0x6B => {
-                    // load h to l
-                    self.de[1] = self.hl[1];
-                    self.pc += 1;
-                }
-                0x6E => {
-                    // load memory at position hl to l
-                    self.hl[1] = self.read_memory_byte(u16::from_le_bytes(self.hl));
-                    self.pc += 1;
-                }
-                0x6F => {
-                    // load a to l
-                    self.hl[1] = self.a;
-                    self.pc += 1;
-                }
-                0x77 => {
-                    self.write_memory_byte(u16::from_le_bytes(self.hl), self.a);
-                    self.pc += 1;
-                }
-                0x7B => {
-                    // load e to a
-                    self.a = self.de[1];
-                    self.pc += 1;
-                }
-                0x8A => {
-                    self.add_to_a_with_carry(self.de[0]);
-                    self.pc += 1;
-                }
-                0x93 => {
-                    // sub e from a
-                    self.subtract(self.de[1]);
-                    self.pc += 1;
-                }
-                0x94 => {
-                    // sub h from a
-                    self.subtract(self.hl[0]);
-                    self.pc += 1;
-                }
-                0x95 => {
-                    // sub l from a
-                    self.subtract(self.hl[1]);
-                    self.pc += 1;
-                }
-                0x99 => {
-                    // subtract c + 1 from a and store in a
-                    let reg_c = self.bc[1];
-                    self.flags.n = true;
+            let start_time = Instant::now();
+            let t_cycles = self.process_instruction(instruction) * 4;
 
-                    let mut overflow = false;
-                    (self.a, overflow) = self.a.overflowing_sub(reg_c);
-                    (self.a, overflow) = self.a.overflowing_sub(1);
-                    self.flags.c = overflow;
-
-                    self.flags.z = self.a == 0;
-                    self.pc += 1;
-                }
-                0xAA => {
-                    // XOR A with D and store in A
-                    self.a ^= self.de[0];
-                    self.pc += 1;
-                }
-                0xAF => {
-                    // XOR the A register with itself
-                    self.a ^= self.a;
-                    self.pc += 1;
-                }
-                0xB0 => {
-                    // XOR B with A and store in A
-                    self.a ^= self.bc[0];
-                    self.pc += 1;
-                }
-                0xBF => {
-                    // compare A with A, set flags
-                    self.compare_a(self.a);
-                    self.pc += 1;
-                }
-                0xC3 => {
-                    // Jump to the address immediately after the current instruction
-                    let data: [u8; 2] = self.next_word();
-                    println!("{:X} {:X}", data[0], data[1]);
-                    let pos: u16 = u16::from_be_bytes(data); // be because already switched
-                    self.pc = pos;
-                }
-                0xC9 => {
-                    // RET - pop word from stack and set PC to that
-                    let address = self.pop_word();
-                    print!("RET | {:#08X}", address);
-                    self.pc = address;
-                }
-                0xCD => {
-                    // CALL a16 = push PC to stack and jump to next byte
-                    let address = u16::from_le_bytes(self.next_word());
-                    print!("CALL a16 | {:#08X}", address);
-                    self.push_word(self.pc);
-                    self.pc = address;
-                }
-                0xD2 => {
-                    // Jump to address in next word if carry flag is true, or continue
-                    if self.flags.c {
-                        self.pc = u16::from_le_bytes(self.next_word());
-                    } else {
-                        self.pc += 1;
-                    }
-                }
-                0xD6 => {
-                    // subtract net byte from A and saver to A
-                    let data = self.next_byte();
-                    self.subtract(data);
-                    self.pc += 1;
-                }
-                0xE0 => {
-                    // Store A to address at memory 0xFFxx, where xx is the next byte
-                    let data = self.next_byte();
-                    self.write_memory_byte(u16::from_le_bytes([0xff, data]), self.a);
-                    self.pc += 1;
-                }
-                0xF0 => {
-                    // Load address at memory 0xFFxx into A, where xx is the next byte
-                    let data = self.next_byte();
-                    self.a = self.read_memory_byte(u16::from_le_bytes([0xff, data]));
-                    self.pc += 1;
-                }
-                0xF3 => {
-                    self.interrupts_enabled = false;
-                    self.pc += 1;
-                }
-                0xF9 => {
-                    // Load HL to SP
-                    self.sp = u16::from_le_bytes(self.hl);
-                    self.pc += 1;
-                }
-                0xFE => {
-                    // Set Z flag if A and next byte are equal by calculating A - next byte == 0
-                    let data = self.next_byte();
-                    self.compare_a(data);
-                    self.pc += 1;
-                }
-                0xFF => {
-                    self.push_word(self.pc);
-                    self.pc = self.cartridge.data[0x38] as u16;
-                }
-                _ => {
-                    println!();
-                    self.debug_registers();
-                    panic!("Unknown instruction {:#04X}", instruction)
-                }
+            for _ in 0..t_cycles {
+                self.memory.video.step();
             }
 
-            println!();
-            //sleep(time::Duration::from_millis(5));
+            let end_time = Instant::now();
+
+            let expected_time = Duration::from_secs_f64(t_cycles as f64 / CPU_FREQ);
+            let time_elapsed = end_time.duration_since(start_time);
+
+            if time_elapsed.lt(&expected_time) {
+                let sleep_for = expected_time.sub(time_elapsed);
+                sleep(sleep_for);
+            }
         }
+    }
+
+    /**
+     * Runs the next instruction and returns the cycle cost divided by 4 (M-cycles)
+     */
+    fn process_instruction(&mut self, instruction: u8) -> usize {
+        print!("{:#08X} | {:#04X} | ", self.pc, instruction);
+
+        let m_cycles = match instruction {
+            0x00 => {
+                self.pc += 1;
+                0
+            }
+            0x01 => {
+                // load next 2 bytes in bc
+                let data: [u8; 2] = self.next_word();
+                self.bc = data;
+                self.pc += 1;
+                3
+            }
+            0x02 => {
+                // write a to memory on location bc
+                self.memory.write_byte(u16::from_le_bytes(self.bc), self.a);
+                self.pc += 1;
+                2
+            }
+            0x03 => {
+                // increment BE by 1
+                self.bc = (u16::from_le_bytes(self.bc) + 1).to_le_bytes();
+                self.pc += 1;
+                2
+            }
+            0x04 => {
+                // increment B by 1
+                self.bc[0] = self.increment(self.bc[0]);
+                self.pc += 1;
+                1
+            }
+            0x05 => {
+                // decrement B by 1
+                self.bc[0] = self.decrement(self.bc[0]);
+                self.pc += 1;
+                1
+            }
+            0x06 => {
+                // load next byte to b
+                let data = self.next_byte();
+                self.bc[0] = data;
+                self.pc += 1;
+                2
+            }
+            0x07 => {
+                self.rlca();
+                self.pc += 1;
+                1
+            }
+            0x08 => {
+                // write stack pointer to memory at next word location
+                let pos = u16::from_le_bytes(self.next_word());
+                self.memory.write_word(pos, self.sp);
+                self.pc += 1;
+                5
+            }
+            0x0A => {
+                // load memory at address BC into A
+                self.a = self.memory.read_byte(u16::from_le_bytes(self.bc));
+                self.pc += 1;
+                2
+            }
+            0x0B => {
+                // decrement BC by 1
+                let data = u16::from_le_bytes(self.bc);
+                self.bc = (data - 1).to_le_bytes();
+                self.pc += 1;
+                2
+            }
+            0x0C => {
+                // increment C by 1
+                self.bc[1] = self.increment(self.bc[1]);
+                self.pc += 1;
+                1
+            }
+            0x0D => {
+                // decrement C by 1
+                self.bc[1] = self.decrement(self.bc[1]);
+                self.pc += 1;
+                1
+            }
+            0x0E => {
+                // load next byte to c
+                let data = self.next_byte();
+                self.bc[1] = data;
+                self.pc += 1;
+                2
+            }
+            0x11 => {
+                // load next word into DE
+                self.de = self.next_word();
+                self.pc += 1;
+                3
+            }
+            0x14 => {
+                // increment D by 1
+                self.de[0] = self.increment(self.de[0]);
+                self.pc += 1;
+                1
+            }
+            0x15 => {
+                // decrement D by 1
+                self.de[0] = self.decrement(self.de[0]);
+                self.pc += 1;
+                1
+            }
+            0x16 => {
+                // load next byte to d
+                let data = self.next_byte();
+                self.de[0] = data;
+                self.pc += 1;
+                2
+            }
+            0x18 => {
+                // relative jump
+                let pos = self.next_byte();
+                self.pc += pos as u16;
+                3
+            }
+            0x19 => {
+                // add DE to HL
+                self.add_to_reg_hl(self.de);
+                self.pc += 1;
+                2
+            }
+            0x1D => {
+                // decrement E by 1
+                self.de[1] = self.decrement(self.de[1]);
+                self.pc += 1;
+                1
+            }
+            // todo: set clockcycles from here on
+            0x1E => {
+                self.de[1] = self.next_byte();
+                self.pc += 1;
+                1
+            }
+            0x1F => {
+                self.rra();
+                self.pc += 1;
+                1
+            }
+            0x20 => {
+                // if z is 0, jump next byte relative steps, otherwise skip next byte
+                if !self.flags.z {
+                    //let current_addr = self.pc; // store because next_byte increases pc
+                    //let new_addr = current_addr + self.next_byte() as u16 + 2;
+                    let data = self.next_byte();
+                    self.relative_jump(data);
+                    self.pc += 1;
+                    print!("JR NZ, s8 | Jump to {:X}", self.pc);
+                } else {
+                    print!("JR NZ, s8 | Skip");
+                    self.pc += 2; // skip data
+                }
+                1
+            }
+            0x21 => {
+                // load the next word (16 bits) into the HL register
+                let data: [u8; 2] = self.next_word();
+                self.hl = data;
+                self.pc += 1;
+                1
+            }
+            0x22 => {
+                // write value of A to memory location HL and increment HL
+                self.memory.write_byte(u16::from_le_bytes(self.hl), self.a);
+                self.hl = (u16::from_le_bytes(self.hl) + 1).to_le_bytes();
+                self.pc += 1;
+                1
+            }
+            0x23 => {
+                // increment HL by 1
+                self.hl = (u16::from_le_bytes(self.hl) + 1).to_le_bytes();
+                self.pc += 1;
+                1
+            }
+            0x24 => {
+                // increment H by 1
+                self.hl[0] = self.increment(self.hl[0]);
+                self.pc += 1;
+                1
+            }
+            0x25 => {
+                // decrement H by 1
+                self.hl[0] = self.decrement(self.hl[0]);
+                self.pc += 1;
+                1
+            }
+            0x28 => {
+                // if z is 1, jump next byte relative steps, otherwise skip next byte
+                if self.flags.z {
+                    // let current_addr = self.pc; // store because next_byte increases pc
+                    // let new_addr = current_addr + self.next_byte() as u16 + 2;
+                    let data = self.next_byte();
+                    self.relative_jump(data);
+                    self.pc += 1;
+                    print!("JR Z, s8 | Jump to {:X}", self.pc);
+                } else {
+                    print!("JR Z, s8 | Skip");
+                    self.pc += 2; // skip data
+                }
+                1
+            }
+            0x29 => {
+                // Add HL to HL
+                self.add_to_reg_hl(self.hl);
+                self.pc += 1;
+                1
+            }
+            0x2A => {
+                // Load contents of memory at HL to A, and incrment HL
+                let address = u16::from_le_bytes(self.hl);
+                self.a = self.memory.read_byte(address);
+                self.hl = (address + 1).to_le_bytes();
+                self.pc += 1;
+                2
+            }
+            0x2C => {
+                // increment L by 1
+                self.hl[1] = self.increment(self.hl[1]);
+                self.pc += 1;
+                1
+            }
+            0x2D => {
+                // decrement L by 1
+                self.hl[1] = self.decrement(self.hl[1]);
+                self.pc += 1;
+                1
+            }
+            0x2E => {
+                // set L to next byte
+                self.hl[1] = self.next_byte();
+                self.pc += 1;
+                1
+            }
+            0x2F => {
+                // complement / invert A
+                self.a = !self.a;
+                self.pc += 1;
+                1
+            }
+            0x31 => {
+                // load next byte into stack pointer
+                self.sp = u16::from_le_bytes(self.next_word());
+                self.pc += 1;
+                1
+            }
+            0x32 => {
+                // store a in memory at location hl, and decrement hl
+                let hl_u16 = u16::from_le_bytes(self.hl);
+                self.memory.write_byte(hl_u16, self.a);
+                self.hl = (hl_u16 - 1).to_le_bytes();
+                self.pc += 1;
+                1
+            }
+            0x35 => {
+                // decrement memory at location HL by 1
+                let hl_u16 = u16::from_le_bytes(self.hl);
+                let mut data = self.memory.read_byte(hl_u16);
+                data = self.decrement(data);
+                self.memory.write_byte(hl_u16, data);
+                self.pc += 1;
+                3
+            }
+            0x36 => {
+                // load next byte into memory at HL
+                let hl_u16 = u16::from_le_bytes(self.hl);
+                let data = self.next_byte();
+                self.memory.write_byte(hl_u16, data);
+                self.pc += 1;
+                3
+            }
+            0x3E => {
+                // Load next byte to A
+                self.a = self.next_byte();
+                self.pc += 1;
+                1
+            }
+            0x41 => {
+                self.bc[0] = self.bc[1];
+                self.pc += 1;
+                1
+            }
+            0x4A => {
+                // load d to c
+                self.de[0] = self.bc[1];
+                self.pc += 1;
+                1
+            }
+            0x4B => {
+                // load c to e
+                self.bc[1] = self.de[1];
+                self.pc += 1;
+                1
+            }
+            0x4C => {
+                // load h to c
+                self.hl[0] = self.bc[1];
+                self.pc += 1;
+                1
+            }
+            0x4D => {
+                // load l to c
+                self.hl[1] = self.bc[1];
+                self.pc += 1;
+                1
+            }
+            0x4E => {
+                // load memory at position hl to c
+                self.bc[1] = self.memory.read_byte(u16::from_le_bytes(self.hl));
+                self.pc += 1;
+                1
+            }
+            0x4F => {
+                // load a to c
+                self.a = self.bc[1];
+                self.pc += 1;
+                1
+            }
+            0x50 => {
+                // load b to d
+                self.bc[0] = self.de[0];
+                self.pc += 1;
+                1
+            }
+            0x51 => {
+                // load c to d
+                self.bc[1] = self.de[0];
+                self.pc += 1;
+                1
+            }
+            0x52 => {
+                // load d to d, no-op
+                //self.de[0] = self.de[0];
+                self.pc += 1;
+                1
+            }
+            0x53 => {
+                // load e to d
+                self.de[1] = self.de[0];
+                self.pc += 1;
+                1
+            }
+            0x56 => {
+                // load memory at position hl to d
+                self.de[0] = self.memory.read_byte(u16::from_le_bytes(self.hl));
+                self.pc += 1;
+                1
+            }
+            0x58 => {
+                // load b to e
+                self.bc[0] = self.de[1];
+                self.pc += 1;
+                1
+            }
+            0x5A => {
+                // load d to e
+                self.de[0] = self.de[1];
+                self.pc += 1;
+                1
+            }
+            0x5B => {
+                // load e to e, no-op
+                // self.de[1] = self.de[1];
+                self.pc += 1;
+                1
+            }
+            0x5C => {
+                // load h to e
+                self.de[1] = self.hl[0];
+                self.pc += 1;
+                1
+            }
+            0x60 => {
+                // load b to h
+                self.bc[0] = self.hl[0];
+                self.pc += 1;
+                1
+            }
+            0x67 => {
+                // load a to h
+                self.hl[0] = self.a;
+                self.pc += 1;
+                1
+            }
+            0x6B => {
+                // load h to l
+                self.de[1] = self.hl[1];
+                self.pc += 1;
+                1
+            }
+            0x6E => {
+                // load memory at position hl to l
+                self.hl[1] = self.memory.read_byte(u16::from_le_bytes(self.hl));
+                self.pc += 1;
+                1
+            }
+            0x6F => {
+                // load a to l
+                self.hl[1] = self.a;
+                self.pc += 1;
+                1
+            }
+            0x77 => {
+                self.memory.write_byte(u16::from_le_bytes(self.hl), self.a);
+                self.pc += 1;
+                1
+            }
+            0x7B => {
+                // load e to a
+                self.a = self.de[1];
+                self.pc += 1;
+                1
+            }
+            0x8A => {
+                self.add_to_a_with_carry(self.de[0]);
+                self.pc += 1;
+                1
+            }
+            0x93 => {
+                // sub e from a
+                self.subtract(self.de[1]);
+                self.pc += 1;
+                1
+            }
+            0x94 => {
+                // sub h from a
+                self.subtract(self.hl[0]);
+                self.pc += 1;
+                1
+            }
+            0x95 => {
+                // sub l from a
+                self.subtract(self.hl[1]);
+                self.pc += 1;
+                1
+            }
+            0x99 => {
+                // subtract c + 1 from a and store in a
+                let reg_c = self.bc[1];
+                self.flags.n = true;
+
+                let mut overflow = false;
+                (self.a, overflow) = self.a.overflowing_sub(reg_c);
+                (self.a, overflow) = self.a.overflowing_sub(1);
+                self.flags.c = overflow;
+
+                self.flags.z = self.a == 0;
+                self.pc += 1;
+                1
+            }
+            0xAA => {
+                // XOR A with D and store in A
+                self.a ^= self.de[0];
+                self.pc += 1;
+                1
+            }
+            0xAF => {
+                // XOR the A register with itself
+                self.a ^= self.a;
+                self.pc += 1;
+                1
+            }
+            0xB0 => {
+                // XOR B with A and store in A
+                self.a ^= self.bc[0];
+                self.pc += 1;
+                1
+            }
+            0xBF => {
+                // compare A with A, set flags
+                self.compare_a(self.a);
+                self.pc += 1;
+                1
+            }
+            0xC3 => {
+                // Jump to the address immediately after the current instruction
+                let data: [u8; 2] = self.next_word();
+                let pos: u16 = u16::from_be_bytes(data); // be because already switched
+                self.pc = pos;
+                1
+            }
+            0xC9 => {
+                // RET - pop word from stack and set PC to that
+                let address = self.pop_word();
+                print!("RET | {:#08X}", address);
+                self.pc = address;
+                1
+            }
+            0xCD => {
+                // CALL a16 = push PC to stack and jump to next byte
+                let address = u16::from_be_bytes(self.next_word()); // BigEndian because we already switched
+                print!("CALL a16 | {:#08X}", address);
+                self.push_word(self.pc);
+                self.pc = address;
+                1
+            }
+            0xD2 => {
+                // Jump to address in next word if carry flag is true, or continue
+                if self.flags.c {
+                    self.pc = u16::from_le_bytes(self.next_word());
+                } else {
+                    self.pc += 1;
+                }
+                1
+            }
+            0xD6 => {
+                // subtract net byte from A and saver to A
+                let data = self.next_byte();
+                self.subtract(data);
+                self.pc += 1;
+                1
+            }
+            0xE0 => {
+                // Store A to address at memory 0xFFxx, where xx is the next byte
+                let address = self.next_byte();
+                self.memory
+                    .write_byte(u16::from_le_bytes([address, 0xff]), self.a);
+                self.pc += 1;
+                1
+            }
+            0xE2 => {
+                // Store A to address at memory 0xFFxx, where xx is register C
+                let address = self.bc[1];
+                self.memory
+                    .write_byte(u16::from_le_bytes([address, 0xff]), self.a);
+                self.pc += 1;
+                2
+            }
+            0xEA => {
+                // Store A to address at memory 0xFFxx, where xx is the next byte
+                let address = u16::from_le_bytes(self.next_word());
+                self.memory.write_byte(address, self.a);
+                self.pc += 4;
+                1
+            }
+            0xF0 => {
+                // Load address at memory 0xFFxx into A, where xx is the next byte
+                let data = self.next_byte();
+                self.a = self.memory.read_byte(u16::from_le_bytes([data, 0xff]));
+                self.pc += 1;
+                1
+            }
+            0xF3 => {
+                self.interrupts_enabled = false;
+                self.pc += 1;
+                1
+            }
+            0xF9 => {
+                // Load HL to SP
+                self.sp = u16::from_le_bytes(self.hl);
+                self.pc += 1;
+                1
+            }
+            0xFE => {
+                // Set Z flag if A and next byte are equal by calculating A - next byte == 0
+                let data = self.next_byte();
+                self.compare_a(data);
+                self.pc += 1;
+                1
+            }
+            0xFF => {
+                self.push_word(self.pc);
+                self.pc = self.cartridge.data[0x38] as u16;
+                1
+            }
+            _ => {
+                println!();
+                self.debug_registers();
+                panic!("Unknown instruction {:#04X}", instruction)
+            }
+        };
+
+        println!();
+
+        m_cycles
     }
 
     /** Increments program counter */
@@ -533,32 +691,15 @@ impl CPU {
     fn push_word(&mut self, word: u16) {
         self.sp -= 2;
 
-        self.memory.set_position(self.sp as u64);
-        self.memory.write_u16::<LittleEndian>(word).unwrap();
+        self.memory.write_word(self.sp, word);
     }
 
     fn pop_word(&mut self) -> u16 {
-        self.memory.set_position(self.sp as u64);
-        let data = self.memory.read_u16::<LittleEndian>().unwrap();
+        let data = self.memory.read_word(self.sp);
 
         self.sp += 2;
 
         data
-    }
-
-    fn read_memory_byte(&mut self, pos: u16) -> u8 {
-        self.memory.set_position(pos as u64);
-        self.memory.read_u8().unwrap()
-    }
-
-    fn write_memory_byte(&mut self, pos: u16, byte: u8) {
-        self.memory.set_position(pos as u64);
-        self.memory.write_u8(byte).unwrap()
-    }
-
-    fn write_memory_word(&mut self, pos: u16, word: u16) {
-        self.memory.set_position(pos as u64);
-        self.memory.write_u16::<LittleEndian>(word).unwrap()
     }
 
     /** add 1 to byte, does not set carry flag */
@@ -649,17 +790,7 @@ impl CPU {
     }
 
     fn relative_jump(&mut self, data: u8) {
-        self.pc = self.signed_add(self.pc, data);
-    }
-
-    fn signed_add(&self, a: u16, b: u8) -> u16
-    {
-        let b_signed: i8 = unsafe { std::mem::transmute(b) };
-        if b_signed >= 0 {
-            a + b_signed.abs() as u16
-        } else {
-            a - b_signed.abs() as u16
-        }
+        self.pc = signed_add(self.pc, data);
     }
 
     fn debug_registers(&self) {
