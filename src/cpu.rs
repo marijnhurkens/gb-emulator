@@ -313,11 +313,20 @@ impl CPU {
                 // h_flag = 0; // h flag is always cleared
 
                 if !self.flags.n {
-                    if self.flags.c || self.a > 0x99 { self.a += 0x60; self.flags.c = true; }
-                    if self.flags.h || (self.a & 0x0f) > 0x9 {self.a += 0x6; }
+                    if self.flags.c || self.a > 0x99 {
+                        self.a += 0x60;
+                        self.flags.c = true;
+                    }
+                    if self.flags.h || (self.a & 0x0f) > 0x9 {
+                        self.a += 0x6;
+                    }
                 } else {
-                    if self.flags.c { self.a -= 0x60; }
-                    if self.flags.h { self.a -= 0x6; }
+                    if self.flags.c {
+                        self.a -= 0x60;
+                    }
+                    if self.flags.h {
+                        self.a -= 0x6;
+                    }
                 }
 
                 self.flags.z = self.a == 0;

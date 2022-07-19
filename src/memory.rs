@@ -21,28 +21,23 @@ impl Memory {
 
     pub fn read_byte(&mut self, pos: u16) -> u8 {
         match pos {
-            0x0000 ..= 0x3FFF => {
+            0x0000..=0x3FFF => {
                 // Memory bank 0
                 self.read_byte_from_storage(pos)
             }
-            0x4000 ..= 0x7FFF => {
+            0x4000..=0x7FFF => {
                 // Switchable memory bank 01..max, todo
                 self.read_byte_from_storage(pos)
             }
             VRAM_START..=0x9FFF => {
                 unimplemented!("Reading vram")
             }
-            0xA000 ..= 0xBFFF => {
-                self.read_byte_from_storage(pos)
-            }
-            0xFF00 ..= 0xFF7F => {
-                self.read_io_register(pos)
-            }
+            0xA000..=0xBFFF => self.read_byte_from_storage(pos),
+            0xFF00..=0xFF7F => self.read_io_register(pos),
             _ => {
                 unimplemented!("Memory map not implemented for {:#04X}", pos)
             }
         }
-
     }
 
     fn read_byte_from_storage(&mut self, pos: u16) -> u8 {
@@ -67,9 +62,7 @@ impl Memory {
 
     fn read_io_register(&self, pos: u16) -> u8 {
         match pos {
-            0xFF41 => {
-                self.video.lcd_status.bits
-            }
+            0xFF41 => self.video.lcd_status.bits,
             0xFF44 => {
                 self.video.line // LY, LCD y coordinate
             }
@@ -104,7 +97,6 @@ pub struct Video {
     lcd_status: LcdStatus,
 }
 
-
 #[derive(Debug)]
 enum Mode {
     OamRead,
@@ -133,7 +125,7 @@ bitflags! {
 impl Video {
     pub fn new() -> Self {
         Self {
-            pixels: [0;SCREEN_WIDTH * SCREEN_HEIGHT * 4],
+            pixels: [0; SCREEN_WIDTH * SCREEN_HEIGHT * 4],
             mode: Mode::OamRead,
             cycle_step: 0,
             mode_step: 0,
@@ -155,16 +147,14 @@ impl Video {
                 }
             }
             Mode::VramRead => {
-                if self.mode_step >= 172
-                {
+                if self.mode_step >= 172 {
                     self.mode_step = 0;
                     self.mode = Mode::HBlank;
                     // write scanline
                 }
             }
             Mode::HBlank => {
-                if self.mode_step >= 204
-                {
+                if self.mode_step >= 204 {
                     self.mode_step = 0;
                     self.line += 1;
 
