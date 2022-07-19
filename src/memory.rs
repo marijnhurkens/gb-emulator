@@ -76,8 +76,12 @@ impl Memory {
             0xFF45 => {
                 unimplemented!()
             }
+            0xFF00 => {
+                // joypad input
+                0x0
+            }
             _ => {
-                unimplemented!("IO register not implemented")
+                unimplemented!("IO register not implemented for {:#04X}", pos)
             }
         }
     }
@@ -123,7 +127,6 @@ bitflags! {
         const OBJ_SIZE =                0b00000100;
         const OBJ_ENABLE =              0b00000010;
         const WINDOW_BG_DISPLAY =       0b00000001;
-
     }
 }
 

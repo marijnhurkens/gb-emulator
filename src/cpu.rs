@@ -189,6 +189,14 @@ impl CPU {
                 self.pc += 1;
                 3
             }
+            0x12 => {
+                // store A to memeory location of DE
+                let address = u16::from_le_bytes(self.de);
+                self.memory.write_byte(address, self.a);
+                self.pc += 1;
+
+                2
+            }
             0x14 => {
                 // increment D by 1
                 self.de[0] = self.increment(self.de[0]);
@@ -282,6 +290,40 @@ impl CPU {
                 // decrement H by 1
                 self.hl[0] = self.decrement(self.hl[0]);
                 self.pc += 1;
+                1
+            }
+            0x26 => {
+                // Load next byte to H
+                let data = self.next_byte();
+                self.hl[0] = data;
+                self.pc += 1;
+                2
+            }
+            0x27 => {
+                // // note: assumes a is a uint8_t and wraps from 0xff to 0
+                // if (!n_flag) {  // after an addition, adjust if (half-)carry occurred or if result is out of bounds
+                //   if (c_flag || a > 0x99) { a += 0x60; c_flag = 1; }
+                //   if (h_flag || (a & 0x0f) > 0x09) { a += 0x6; }
+                // } else {  // after a subtraction, only adjust if (half-)carry occurred
+                //   if (c_flag) { a -= 0x60; }
+                //   if (h_flag) { a -= 0x6; }
+                // }
+                // // these flags are always updated
+                // z_flag = (a == 0); // the usual z flag
+                // h_flag = 0; // h flag is always cleared
+
+                if !self.flags.n {
+                    if self.flags.c || self.a > 0x99 { self.a += 0x60; self.flags.c = true; }
+                    if self.flags.h || (self.a & 0x0f) > 0x9 {self.a += 0x6; }
+                } else {
+                    if self.flags.c { self.a -= 0x60; }
+                    if self.flags.h { self.a -= 0x6; }
+                }
+
+                self.flags.z = self.a == 0;
+                self.flags.h = false;
+                self.pc += 1;
+
                 1
             }
             0x28 => {
@@ -504,9 +546,19 @@ impl CPU {
                 self.pc += 1;
                 1
             }
+            0x78 => {
+                self.a = self.bc[0];
+                self.pc += 1;
+                1
+            }
             0x7B => {
                 // load e to a
                 self.a = self.de[1];
+                self.pc += 1;
+                1
+            }
+            0x7F => {
+                // load a to a, no-op
                 self.pc += 1;
                 1
             }
@@ -565,6 +617,12 @@ impl CPU {
                 self.pc += 1;
                 1
             }
+            0xB1 => {
+                // xor C with C and store in A
+                self.a ^= self.bc[1];
+                self.pc += 1;
+                1
+            }
             0xBF => {
                 // compare A with A, set flags
                 self.compare_a(self.a);
@@ -584,6 +642,10 @@ impl CPU {
                 print!("RET | {:#08X}", address);
                 self.pc = address;
                 1
+            }
+            0xCB => {
+                println!();
+                unimplemented!("16 bit instruction prefix");
             }
             0xCD => {
                 // CALL a16 = push PC to stack and jump to next byte
@@ -625,6 +687,12 @@ impl CPU {
                 self.pc += 1;
                 2
             }
+            0xE6 => {
+                let data = self.next_byte();
+                self.a &= data;
+                self.pc += 1;
+                2
+            }
             0xEA => {
                 // Store A to address at memory 0xFFxx, where xx is the next byte
                 let address = u16::from_le_bytes(self.next_word());
@@ -647,6 +715,11 @@ impl CPU {
             0xF9 => {
                 // Load HL to SP
                 self.sp = u16::from_le_bytes(self.hl);
+                self.pc += 1;
+                1
+            }
+            0xFB => {
+                self.interrupts_enabled = true;
                 self.pc += 1;
                 1
             }
