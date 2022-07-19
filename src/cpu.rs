@@ -1,9 +1,6 @@
-use std::io::Cursor;
 use std::ops::Sub;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
-
-use byteorder::LittleEndian;
 
 use crate::cartridge::Cartridge;
 use crate::helpers::signed_add;
@@ -12,7 +9,7 @@ use crate::memory::Memory;
 const CPU_FREQ: f64 = 4_194_304.0;
 
 #[derive(Debug)]
-pub struct CPU {
+pub struct Cpu {
     pc: u16,
     sp: u16,
     a: u8,
@@ -38,9 +35,9 @@ pub struct Flags {
     h: bool,
 }
 
-impl CPU {
+impl Cpu {
     pub fn load_cartridge(cartridge: Cartridge) -> Self {
-        CPU {
+        Cpu {
             pc: 0x0100,
             sp: 0xfffe,
             a: 0x01,
@@ -599,8 +596,8 @@ impl CPU {
                 let reg_c = self.bc[1];
                 self.flags.n = true;
 
-                let mut overflow = false;
-                (self.a, overflow) = self.a.overflowing_sub(reg_c);
+                let overflow;
+                (self.a, _) = self.a.overflowing_sub(reg_c);
                 (self.a, overflow) = self.a.overflowing_sub(1);
                 self.flags.c = overflow;
 

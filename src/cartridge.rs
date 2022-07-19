@@ -1,4 +1,3 @@
-
 #[derive(Debug)]
 pub struct Cartridge {
     pub header: CartridgeHeader,

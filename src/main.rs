@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 extern crate core;
 
 use std::ffi::OsString;
@@ -7,7 +9,7 @@ use std::io::Read;
 use clap::Parser;
 
 use crate::cartridge::Cartridge;
-use crate::cpu::CPU;
+use crate::cpu::Cpu;
 
 mod cartridge;
 mod cpu;
@@ -28,7 +30,7 @@ fn main() {
     rom.read_to_end(&mut data).unwrap();
 
     let cartridge = Cartridge::load_rom(data);
-    let mut cpu = CPU::load_cartridge(cartridge);
+    let mut cpu = Cpu::load_cartridge(cartridge);
 
     cpu.run();
 }
