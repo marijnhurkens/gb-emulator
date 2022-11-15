@@ -1,43 +1,74 @@
-use std::io::Cursor;
+use std::io::{Cursor, Read};
 
 use bitflags::bitflags;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use crate::{SCREEN_BUFFER_SIZE};
 
 const MEM_SIZE: usize = 1024 * 128;
+const VRAM_START: u16 = 0x8000;
 
 #[derive(Debug)]
 pub struct Memory {
     storage: Cursor<Vec<u8>>,
+    rom: Vec<u8>,
     pub video: Video,
 }
 
 impl Memory {
-    pub fn new() -> Self {
+    pub fn new(rom: Vec<u8>) -> Self {
         Self {
             storage: Cursor::new(vec![0x0; MEM_SIZE]),
+            rom,
             video: Video::new(),
         }
     }
 
     pub fn read_byte(&mut self, pos: u16) -> u8 {
-        match pos {
+        let res = match pos {
             0x0000..=0x3FFF => {
                 // Memory bank 0
-                self.read_byte_from_storage(pos)
+                self.read_from_rom(pos)
             }
             0x4000..=0x7FFF => {
                 // Switchable memory bank 01..max, todo
                 self.read_byte_from_storage(pos)
             }
             VRAM_START..=0x9FFF => {
-                unimplemented!("Reading vram")
+                self.read_byte_from_storage(pos)
+                //unimplemented!("Reading vram")
             }
             0xA000..=0xBFFF => self.read_byte_from_storage(pos),
+            0xC000..=0xCFFF => self.read_byte_from_storage(pos),
+            0xD000..=0xDFFF => self.read_byte_from_storage(pos),
+            0xE000..=0xFDFF => self.read_byte_from_storage(pos - 0x2000),
             0xFF00..=0xFF7F => self.read_io_register(pos),
+            0xFF80..=0xFFFE => {
+                // High ram, todo
+                self.read_byte_from_storage(pos)
+            }
             _ => {
                 unimplemented!("Memory map not implemented for {:#04X}", pos)
             }
-        }
+        };
+
+        print!("read byte {:#04X} -> {:#04X} | ", pos, res);
+
+        res
+    }
+
+    pub fn read_word(&mut self, pos: u16) -> u16 {
+        let lo = self.read_byte(pos) as u16;
+        let hi = self.read_byte(pos+1) as u16;
+        hi << 8 | lo
+    }
+
+    pub fn read_vram(&mut self) -> [u8; SCREEN_BUFFER_SIZE]
+    {
+        self.storage.set_position(VRAM_START as u64);
+        let mut buffer = [0;SCREEN_BUFFER_SIZE];
+        self.storage.read_exact(&mut buffer).unwrap();
+
+        buffer
     }
 
     fn read_byte_from_storage(&mut self, pos: u16) -> u8 {
@@ -45,17 +76,18 @@ impl Memory {
         self.storage.read_u8().unwrap()
     }
 
-    pub fn read_word(&mut self, pos: u16) -> u16 {
-        self.storage.set_position(pos as u64);
-        self.storage.read_u16::<LittleEndian>().unwrap()
+    fn read_from_rom(&self, pos: u16) -> u8 {
+        self.rom[pos as usize]
     }
 
     pub fn write_byte(&mut self, pos: u16, byte: u8) {
+        print!("write byte {:#04X} at {:#04X} | ", byte, pos);
         self.storage.set_position(pos as u64);
         self.storage.write_u8(byte).unwrap()
     }
 
     pub fn write_word(&mut self, pos: u16, word: u16) {
+        print!("write word {:#08X} at {:#04X} | ", word, pos);
         self.storage.set_position(pos as u64);
         self.storage.write_u16::<LittleEndian>(word).unwrap()
     }
@@ -80,13 +112,9 @@ impl Memory {
     }
 }
 
-const SCREEN_WIDTH: usize = 160;
-const SCREEN_HEIGHT: usize = 144;
-const VRAM_START: u16 = 0x8000;
 
 #[derive(Debug)]
 pub struct Video {
-    pixels: [u8; SCREEN_WIDTH * SCREEN_HEIGHT * 4],
     cycle_step: usize,
     mode_step: usize,
     line: u8,
@@ -125,7 +153,6 @@ bitflags! {
 impl Video {
     pub fn new() -> Self {
         Self {
-            pixels: [0; SCREEN_WIDTH * SCREEN_HEIGHT * 4],
             mode: Mode::OamRead,
             cycle_step: 0,
             mode_step: 0,

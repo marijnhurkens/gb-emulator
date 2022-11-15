@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use crate::cartridge::Cartridge;
 use crate::helpers::signed_add;
 use crate::memory::Memory;
+use crate::ScreenBuffer;
 
 const CPU_FREQ: f64 = 4_194_304.0;
 
@@ -51,14 +52,19 @@ impl Cpu {
                 h: false,
             },
             interrupts_enabled: false,
-            memory: Memory::new(),
+            memory: Memory::new(cartridge.data.clone()),
             cartridge,
         }
     }
 
-    pub fn run(&mut self) {
+    pub fn run(&mut self, screen_buffer: ScreenBuffer) {
         let title = &self.cartridge.header.title;
         println!("Running {title}");
+
+        // draw to screen
+        let mut guard = screen_buffer.lock().unwrap();
+        (*guard) = self.memory.read_vram();
+        drop(guard);
 
         loop {
             if self.pc as usize >= self.cartridge.data.len() {
@@ -75,8 +81,8 @@ impl Cpu {
                 self.memory.video.step();
             }
 
+            // handle timing
             let end_time = Instant::now();
-
             let expected_time = Duration::from_secs_f64(t_cycles as f64 / CPU_FREQ);
             let time_elapsed = end_time.duration_since(start_time);
 
@@ -92,6 +98,8 @@ impl Cpu {
      */
     fn process_instruction(&mut self, instruction: u8) -> usize {
         print!("{:#08X} | {:#04X} | ", self.pc, instruction);
+
+        let break_now = self.pc == 0x0000;
 
         let m_cycles = match instruction {
             0x00 => {
@@ -187,11 +195,17 @@ impl Cpu {
                 3
             }
             0x12 => {
-                // store A to memeory location of DE
+                // store A to mememory location of DE
                 let address = u16::from_le_bytes(self.de);
                 self.memory.write_byte(address, self.a);
                 self.pc += 1;
 
+                2
+            }
+            0x13 => {
+                // increment DE by 1
+                self.de = (u16::from_le_bytes(self.de) + 1).to_le_bytes();
+                self.pc += 1;
                 2
             }
             0x14 => {
@@ -231,7 +245,12 @@ impl Cpu {
                 self.pc += 1;
                 1
             }
-            // todo: set clockcycles from here on
+            0x1A => {
+                self.a = self.memory.read_byte(u16::from_le_bytes(self.de));
+                self.pc += 1;
+                2
+            }
+            // todo: set clock cycles from here on
             0x1E => {
                 self.de[1] = self.next_byte();
                 self.pc += 1;
@@ -244,6 +263,7 @@ impl Cpu {
             }
             0x20 => {
                 // if z is 0, jump next byte relative steps, otherwise skip next byte
+                // self.debug_registers();
                 if !self.flags.z {
                     //let current_addr = self.pc; // store because next_byte increases pc
                     //let new_addr = current_addr + self.next_byte() as u16 + 2;
@@ -319,7 +339,7 @@ impl Cpu {
                     }
                 } else {
                     if self.flags.c {
-                        self.a -= 0x60;
+                        self.a = self.a.overflowing_sub(0x60).0;
                     }
                     if self.flags.h {
                         self.a -= 0x6;
@@ -416,6 +436,11 @@ impl Cpu {
                 self.pc += 1;
                 3
             }
+            0x37 => {
+                self.flags.c = true;
+                self.pc += 1;
+                1
+            }
             0x3E => {
                 // Load next byte to A
                 self.a = self.next_byte();
@@ -424,6 +449,23 @@ impl Cpu {
             }
             0x41 => {
                 self.bc[0] = self.bc[1];
+                self.pc += 1;
+                1
+            }
+            0x47 => {
+                // Load A to B
+                self.bc[0] = self.a;
+                self.pc += 1;
+                1
+            }
+            0x48 => {
+                // load B to C
+                self.bc[1] = self.bc[0];
+                self.pc += 1;
+                1
+            }
+            0x49 => {
+                // load C to C, no-op
                 self.pc += 1;
                 1
             }
@@ -500,20 +542,38 @@ impl Cpu {
                 1
             }
             0x5A => {
-                // load d to e
+                // load D to E
                 self.de[0] = self.de[1];
                 self.pc += 1;
                 1
             }
             0x5B => {
-                // load e to e, no-op
+                // load E to E, no-op
                 // self.de[1] = self.de[1];
                 self.pc += 1;
                 1
             }
             0x5C => {
-                // load h to e
+                // load H to E
                 self.de[1] = self.hl[0];
+                self.pc += 1;
+                1
+            }
+            0x5D => {
+                // load L to E
+                self.de[1] = self.hl[1];
+                self.pc += 1;
+                1
+            }
+            0x5E => {
+                // load memory at HL to E
+                self.de[1] = self.memory.read_byte(u16::from_le_bytes(self.hl));
+                self.pc += 1;
+                1
+            }
+            0x5F => {
+                // load A to E
+                self.de[1] = self.a;
                 self.pc += 1;
                 1
             }
@@ -557,14 +617,72 @@ impl Cpu {
                 self.pc += 1;
                 1
             }
+            0x79 => {
+                self.a = self.bc[1];
+                self.pc += 1;
+                1
+            }
             0x7B => {
                 // load e to a
                 self.a = self.de[1];
                 self.pc += 1;
                 1
             }
+            0x7C => {
+                // load h to a
+                self.a = self.hl[0];
+                self.pc += 1;
+                1
+            }
+            0x7D => {
+                // load l to a
+                self.a = self.hl[1];
+                self.pc += 1;
+                1
+            }
+            0x7E => {
+                // load memory at hl to a
+                self.a = self.memory.read_byte(u16::from_le_bytes(self.hl));
+                self.pc += 1;
+                1
+            }
             0x7F => {
                 // load a to a, no-op
+                self.pc += 1;
+                2
+            }
+            0x80 => {
+                self.add(self.bc[0]);
+                self.pc += 1;
+                1
+            }
+            0x81 => {
+                self.add(self.bc[1]);
+                self.pc += 1;
+                1
+            }
+            0x82 => {
+                self.add(self.de[0]);
+                self.pc += 1;
+                1
+            }
+            0x83 => {
+                self.add(self.de[1]);
+                self.pc += 1;
+                1
+            }
+            0x84 => {
+                self.add(self.hl[0]);
+                self.pc += 1;
+                1
+            }
+            0x85 => {
+                self.add(self.hl[1]);
+                self.pc += 1;
+                1
+            }
+            0x87 => {
+                self.add(self.a);
                 self.pc += 1;
                 1
             }
@@ -602,6 +720,60 @@ impl Cpu {
                 self.flags.c = overflow;
 
                 self.flags.z = self.a == 0;
+                self.pc += 1;
+                1
+            }
+            0xA0 => {
+                // AND A with B and store in A
+                self.a &= self.bc[0];
+                self.pc += 1;
+                1
+            }
+            0xA1 => {
+                // AND A with C and store in A
+                self.a &= self.bc[1];
+                self.pc += 1;
+                1
+            }
+            0xA2 => {
+                // AND A with D and store in A
+                self.a &= self.de[0];
+                self.pc += 1;
+                1
+            }
+            0xA3 => {
+                // AND A with E and store in A
+                self.a &= self.de[1];
+                self.pc += 1;
+                1
+            }
+            0xA4 => {
+                // AND A with H and store in A
+                self.a &= self.hl[0];
+                self.pc += 1;
+                1
+            }
+            0xA5 => {
+                // AND A with L and store in A
+                self.a &= self.hl[1];
+                self.pc += 1;
+                1
+            }
+            0xA6 => {
+                // AND A with memory at HL and store in A
+                self.a &= self.memory.read_byte(u16::from_le_bytes(self.hl));
+                self.pc += 1;
+                2
+            }
+            0xA7 => {
+                // AND A with A and store in A
+                self.a &= self.a;
+                self.pc += 1;
+                1
+            }
+            0xA9 => {
+                // XOR A with C and store in A
+                self.a ^= self.bc[1];
                 self.pc += 1;
                 1
             }
@@ -649,15 +821,20 @@ impl Cpu {
                 self.pc = address;
                 1
             }
+            0xD5 => {
+                self.push_word(u16::from_le_bytes(self.de));
+                self.pc += 1;
+                4
+            }
             0xCB => {
-                println!();
-                unimplemented!("16 bit instruction prefix");
+                self.pc += 1;
+                self.handle_word_opcode()
             }
             0xCD => {
                 // CALL a16 = push PC to stack and jump to next byte
+                self.push_word(self.pc + 1);
                 let address = u16::from_be_bytes(self.next_word()); // BigEndian because we already switched
                 print!("CALL a16 | {:#08X}", address);
-                self.push_word(self.pc);
                 self.pc = address;
                 1
             }
@@ -683,7 +860,13 @@ impl Cpu {
                 self.memory
                     .write_byte(u16::from_le_bytes([address, 0xff]), self.a);
                 self.pc += 1;
-                1
+                3
+            }
+            0xE1 => {
+                // pop stack to HL
+                self.hl = self.pop_word().to_le_bytes();
+                self.pc += 1;
+                3
             }
             0xE2 => {
                 // Store A to address at memory 0xFFxx, where xx is register C
@@ -693,12 +876,22 @@ impl Cpu {
                 self.pc += 1;
                 2
             }
+            0xE5 => {
+                self.push_word(u16::from_le_bytes(self.hl));
+                self.pc += 1;
+                4
+            }
             0xE6 => {
                 let data = self.next_byte();
                 self.a &= data;
                 self.pc += 1;
                 2
             }
+            0xE9 => {
+                self.pc = u16::from_le_bytes(self.hl);
+                1
+            }
+
             0xEA => {
                 // Store A to address at memory 0xFFxx, where xx is the next byte
                 let address = u16::from_le_bytes(self.next_word());
@@ -706,12 +899,17 @@ impl Cpu {
                 self.pc += 4;
                 1
             }
+            0xEF => {
+                self.push_word(self.pc);
+                self.pc = 0x28;
+                4
+            }
             0xF0 => {
                 // Load address at memory 0xFFxx into A, where xx is the next byte
                 let data = self.next_byte();
                 self.a = self.memory.read_byte(u16::from_le_bytes([data, 0xff]));
                 self.pc += 1;
-                1
+                3
             }
             0xF3 => {
                 self.interrupts_enabled = false;
@@ -737,6 +935,7 @@ impl Cpu {
                 1
             }
             0xFF => {
+                panic!("test");
                 self.push_word(self.pc);
                 self.pc = self.cartridge.data[0x38] as u16;
                 1
@@ -750,7 +949,109 @@ impl Cpu {
 
         println!();
 
+        if break_now {
+            self.debug_registers();
+            panic!();
+        }
+
         m_cycles
+    }
+
+    fn handle_word_opcode(&mut self) -> usize {
+        let instruction = self.cartridge.data[self.pc as usize];
+        print!("{:#04X}", instruction);
+
+        let register_byte = instruction & 0x7;
+        let register = match register_byte {
+            0 => Register::B,
+            1 => Register::C,
+            2 => Register::D,
+            3 => Register::E,
+            4 => Register::H,
+            5 => Register::L,
+            6 => Register::HL,
+            7 => Register::A,
+            _ => {
+                println!();
+                self.debug_registers();
+                panic!("Unknown 16-bit instruction register {:?}", register_byte);
+            }
+        };
+
+        match instruction & 0xC0 {
+            0x00 => {
+                // Shit / rotate
+                let opcode_byte = (instruction & 0x38) >> 3; // byte 3, 4 and 5 give the opcode
+
+                match opcode_byte {
+                    // 0 => {
+                    //     // RLC
+                    //     1
+                    // }
+                    // 1 => {
+                    //     // RRC
+                    //     1
+                    // }
+                    // 2 => {
+                    //     // RL
+                    //     1
+                    // }
+                    // 3 => {
+                    //     // RR
+                    //     1
+                    // }
+                    // 4 => {
+                    //     // SLA
+                    //     1
+                    // }
+                    // 5 => {
+                    //     // SRA
+                    //     1
+                    // }
+                    6 => {
+                        // SWAP
+                        if register == Register::HL {
+                            self.swap_memory(u16::from_le_bytes(self.hl));
+                            self.pc += 1;
+                            4
+                        } else {
+                            self.swap_register(register);
+                            self.pc += 1;
+                            1
+                        }
+                    }
+                    // 7 => {
+                    //     // SRL
+                    //     1
+                    // }
+                    _ => {
+                        println!();
+                        self.debug_registers();
+                        panic!(
+                            "Unknown 16-bit instruction opcode {:#08b} {:?}",
+                            opcode_byte, opcode_byte
+                        );
+                    }
+                }
+            }
+            // 0x40 => {
+            //     // BIT
+            //     1
+            // }
+            // 0x80 => {
+            //     // RES
+            //     1
+            // }
+            // 0xC0 => {
+            //     // SET
+            //     1
+            // }
+            _ => {
+                println!();
+                self.debug_registers();
+                panic!("Unknown 16-bit instruction type");
+            }
+        }
     }
 
     /** Increments program counter */
@@ -815,16 +1116,27 @@ impl Cpu {
     }
 
     /**
-     * Add register B to HL
+     * Add register to HL
      */
     fn add_to_reg_hl(&mut self, b: [u8; 2]) {
         let hl_u16 = u16::from_le_bytes(self.hl);
-        let b_u16 = u16::from_le_bytes(b);
+        let b_u16 = u16::from_be_bytes(b);
         let temp = hl_u16 as u32 + b_u16 as u32;
+        print!("{:#04X}, {:#04X}, {:#04X}", hl_u16, b_u16, temp);
         self.flags.n = false;
         self.flags.c = temp > 0xFFFF;
         self.flags.h = ((hl_u16 & 0xFFF) + (b_u16 & 0xFFF)) > 0xFFF;
-        self.hl = ((temp ^ 0xFFFF) as u16).to_le_bytes();
+        self.hl = ((temp & 0xFFFF) as u16).to_le_bytes();
+    }
+
+    /** add bye to register a */
+    fn add(&mut self, byte: u8) {
+        let n: u16 = self.a as u16 + byte as u16;
+        self.flags.z = (n & 0xFF) == 0;
+        self.flags.h = ((self.a & 0x0F) + (byte & 0x0F)) & 0x10 == 0x10;
+        self.flags.c = n > 0xFF;
+        self.flags.n = false;
+        self.a = (n & 0xFF) as u8;
     }
 
     /** subtract byte from register A */
@@ -873,12 +1185,71 @@ impl Cpu {
     }
 
     fn debug_registers(&self) {
-        println!("Program counter: {:x}", self.pc);
-        println!("Stack pointer: {:x}", self.sp);
-        println!("A: {:x}", self.a);
-        println!("BC: {:x} {:x}", self.bc[0], self.bc[1]);
-        println!("DE: {:x} {:x}", self.de[0], self.de[1]);
-        println!("HL: {:x} {:x}", self.hl[0], self.hl[1]);
+        println!("Program counter: {:#08X}", self.pc);
+        println!("Stack pointer: {:#04X}", self.sp);
+        println!("A: {:#04X}", self.a);
+        println!("BC: {:#04X} {:#04X}", self.bc[0], self.bc[1]);
+        println!("DE: {:#04X} {:#04X}", self.de[0], self.de[1]);
+        println!("HL: {:#04X} {:#04X}", self.hl[0], self.hl[1]);
         println!("Flags: {:?}", self.flags);
     }
+
+    fn swap_memory(&mut self, pos: u16) {
+        let data = self.memory.read_byte(pos);
+
+        let upper = data & 0b11110000;
+        let lower = data & 0b00001111;
+
+        self.memory.write_byte(pos, upper | lower);
+    }
+
+    fn swap_register(&mut self, reg: Register) {
+        let reg = self.get_register(reg);
+
+        let upper = *reg & 0b11110000;
+        let lower = *reg & 0b00001111;
+
+        *reg = upper | lower;
+    }
+
+    fn get_register(&mut self, reg: Register) -> &mut u8 {
+        match reg {
+            Register::B => &mut self.bc[0],
+            Register::C => &mut self.bc[1],
+            Register::D => &mut self.de[0],
+            Register::E => &mut self.de[1],
+            Register::H => &mut self.hl[0],
+            Register::L => &mut self.hl[1],
+            Register::HL => {
+                unimplemented!("Cannot get HL this way")
+            }
+            Register::A => &mut self.a,
+        }
+    }
 }
+
+#[derive(Debug, Eq, PartialEq)]
+enum Register {
+    B,
+    C,
+    D,
+    E,
+    H,
+    L,
+    HL,
+    A,
+}
+
+// #[cfg(test)]
+// mod tests {
+//     use crate::{Cartridge, Cpu};
+//
+//     #[test]
+//     fn it_works() {
+//         let cartridge = Cartridge::load_rom([
+//
+//         ])
+//         let cpu = Cpu::load_cartridge()
+//         assert_eq!(result, 4);
+//     }
+// }
