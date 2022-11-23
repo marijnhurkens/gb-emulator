@@ -1,3 +1,4 @@
+use std::io;
 use std::ops::Sub;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -22,6 +23,8 @@ pub struct Cpu {
     interrupts_enabled: bool,
     memory: Memory,
     cartridge: Cartridge,
+    state: State,
+    break_point: Option<u16>,
 }
 
 #[derive(Debug)]
@@ -34,6 +37,12 @@ pub struct Flags {
     n: bool,
     // todo
     h: bool,
+}
+
+#[derive(Eq, PartialEq, Debug)]
+enum State {
+    Running,
+    Stopped,
 }
 
 impl Cpu {
@@ -54,19 +63,26 @@ impl Cpu {
             interrupts_enabled: false,
             memory: Memory::new(cartridge.data.clone()),
             cartridge,
+            state: State::Stopped,
+            break_point: None,
         }
     }
 
-    pub fn run(&mut self, screen_buffer: ScreenBuffer) {
+    pub fn run(&mut self, screen_buffer: ScreenBuffer, break_point: Option<u16>) {
         let title = &self.cartridge.header.title;
         println!("Running {title}");
 
-        // draw to screen
-        let mut guard = screen_buffer.lock().unwrap();
-        (*guard) = self.memory.read_vram();
-        drop(guard);
+        self.break_point = break_point;
+        self.state = State::Running;
+
+
 
         loop {
+            // draw to screen
+            let mut guard = screen_buffer.lock().unwrap();
+            (*guard) = self.memory.read_vram();
+            drop(guard);
+
             if self.pc as usize >= self.cartridge.data.len() {
                 self.debug_registers();
                 panic!("PC out of bounds");
@@ -99,7 +115,11 @@ impl Cpu {
     fn process_instruction(&mut self, instruction: u8) -> usize {
         print!("{:#08X} | {:#04X} | ", self.pc, instruction);
 
-        let break_now = self.pc == 0x0000;
+        if let Some(break_point) = self.break_point {
+            if break_point == self.pc {
+                self.state = State::Stopped;
+            }
+        }
 
         let m_cycles = match instruction {
             0x00 => {
@@ -270,7 +290,7 @@ impl Cpu {
                     let data = self.next_byte();
                     self.relative_jump(data);
                     self.pc += 1;
-                    print!("JR NZ, s8 | Jump to {:X}", self.pc);
+                    print!("JR NZ, s8 | Jump to {:#04X}", self.pc);
                 } else {
                     print!("JR NZ, s8 | Skip");
                     self.pc += 2; // skip data
@@ -280,6 +300,7 @@ impl Cpu {
             0x21 => {
                 // load the next word (16 bits) into the HL register
                 let data: [u8; 2] = self.next_word();
+                print!("LD HL, d16 | {:#04X}", u16::from_le_bytes(data));
                 self.hl = data;
                 self.pc += 1;
                 1
@@ -607,10 +628,40 @@ impl Cpu {
                 self.pc += 1;
                 1
             }
+            0x70 => {
+                self.memory.write_byte(u16::from_le_bytes(self.hl), self.bc[0]);
+                self.pc += 1;
+                2
+            }
+            0x71 => {
+                self.memory.write_byte(u16::from_le_bytes(self.hl), self.bc[1]);
+                self.pc += 1;
+                2
+            }
+            0x72 => {
+                self.memory.write_byte(u16::from_le_bytes(self.hl), self.de[0]);
+                self.pc += 1;
+                2
+            }
+            0x73 => {
+                self.memory.write_byte(u16::from_le_bytes(self.hl), self.de[1]);
+                self.pc += 1;
+                2
+            }
+            0x74 => {
+                self.memory.write_byte(u16::from_le_bytes(self.hl), self.hl[0]);
+                self.pc += 1;
+                2
+            }
+            0x75 => {
+                self.memory.write_byte(u16::from_le_bytes(self.hl), self.hl[1]);
+                self.pc += 1;
+                2
+            }
             0x77 => {
                 self.memory.write_byte(u16::from_le_bytes(self.hl), self.a);
                 self.pc += 1;
-                1
+                2
             }
             0x78 => {
                 self.a = self.bc[0];
@@ -686,8 +737,41 @@ impl Cpu {
                 self.pc += 1;
                 1
             }
+            0x88 => {
+                self.add_to_a_with_carry(self.bc[0]);
+                self.pc += 1;
+                1
+            }
+            0x89 => {
+                self.add_to_a_with_carry(self.bc[1]);
+                self.pc += 1;
+                1
+            }
             0x8A => {
                 self.add_to_a_with_carry(self.de[0]);
+                self.pc += 1;
+                1
+            }
+            0x8C => {
+                self.add_to_a_with_carry(self.hl[0]);
+                self.pc += 1;
+                1
+            }
+            0x90 => {
+                // sub b from a
+                self.subtract(self.bc[0]);
+                self.pc += 1;
+                1
+            }
+            0x91 => {
+                // sub c from a
+                self.subtract(self.bc[1]);
+                self.pc += 1;
+                1
+            }
+            0x92 => {
+                // sub d from a
+                self.subtract(self.de[0]);
                 self.pc += 1;
                 1
             }
@@ -709,17 +793,33 @@ impl Cpu {
                 self.pc += 1;
                 1
             }
+            0x98 => {
+                self.sub_from_a_with_carry(self.bc[0]);
+                self.pc += 1;
+                1
+            }
             0x99 => {
-                // subtract c + 1 from a and store in a
-                let reg_c = self.bc[1];
-                self.flags.n = true;
-
-                let overflow;
-                (self.a, _) = self.a.overflowing_sub(reg_c);
-                (self.a, overflow) = self.a.overflowing_sub(1);
-                self.flags.c = overflow;
-
-                self.flags.z = self.a == 0;
+                self.sub_from_a_with_carry(self.bc[1]);
+                self.pc += 1;
+                1
+            }
+            0x9A => {
+                self.sub_from_a_with_carry(self.de[0]);
+                self.pc += 1;
+                1
+            }
+            0x9B => {
+                self.sub_from_a_with_carry(self.de[1]);
+                self.pc += 1;
+                1
+            }
+            0x9C => {
+                self.sub_from_a_with_carry(self.hl[0]);
+                self.pc += 1;
+                1
+            }
+            0x9D => {
+                self.sub_from_a_with_carry(self.hl[1]);
                 self.pc += 1;
                 1
             }
@@ -771,6 +871,12 @@ impl Cpu {
                 self.pc += 1;
                 1
             }
+            0xA8 => {
+                // XOR A with B and store in A
+                self.a ^= self.bc[0];
+                self.pc += 1;
+                1
+            }
             0xA9 => {
                 // XOR A with C and store in A
                 self.a ^= self.bc[1];
@@ -783,6 +889,24 @@ impl Cpu {
                 self.pc += 1;
                 1
             }
+            0xAB => {
+                // XOR A with E and store in A
+                self.a ^= self.de[1];
+                self.pc += 1;
+                1
+            }
+            0xAC => {
+                // XOR A with H and store in A
+                self.a ^= self.hl[0];
+                self.pc += 1;
+                1
+            }
+            0xAD => {
+                // XOR A with L and store in A
+                self.a ^= self.hl[1];
+                self.pc += 1;
+                1
+            }
             0xAF => {
                 // XOR the A register with itself
                 self.a ^= self.a;
@@ -790,14 +914,74 @@ impl Cpu {
                 1
             }
             0xB0 => {
-                // XOR B with A and store in A
-                self.a ^= self.bc[0];
+                // OR A with B and store in A
+                self.a |= self.bc[0];
                 self.pc += 1;
                 1
             }
             0xB1 => {
-                // xor C with C and store in A
-                self.a ^= self.bc[1];
+                // OR C with C and store in A
+                self.a |= self.bc[1];
+                self.pc += 1;
+                1
+            }
+            0xB2 => {
+                // OR A with D and store in A
+                self.a |= self.de[0];
+                self.pc += 1;
+                1
+            }
+            0xB3 => {
+                // OR A with E and store in A
+                self.a |= self.de[1];
+                self.pc += 1;
+                1
+            }
+            0xB4 => {
+                // OR A with H and store in A
+                self.a |= self.hl[0];
+                self.pc += 1;
+                1
+            }
+            0xB5 => {
+                // OR A with L and store in A
+                self.a |= self.hl[1];
+                self.pc += 1;
+                1
+            }
+            0xB8 => {
+                // compare A with B, set flags
+                self.compare_a(self.bc[0]);
+                self.pc += 1;
+                1
+            }
+            0xB9 => {
+                // compare A with C, set flags
+                self.compare_a(self.bc[1]);
+                self.pc += 1;
+                1
+            }
+            0xBA => {
+                // compare A with D, set flags
+                self.compare_a(self.de[0]);
+                self.pc += 1;
+                1
+            }
+            0xBB => {
+                // compare A with E, set flags
+                self.compare_a(self.de[1]);
+                self.pc += 1;
+                1
+            }
+            0xBC => {
+                // compare A with H, set flags
+                self.compare_a(self.hl[0]);
+                self.pc += 1;
+                1
+            }
+            0xBD => {
+                // compare A with L, set flags
+                self.compare_a(self.hl[1]);
                 self.pc += 1;
                 1
             }
@@ -807,17 +991,32 @@ impl Cpu {
                 self.pc += 1;
                 1
             }
+            0xC0 => {
+                // RET NZ - if flag z = 0, pop word from stack and set PC to that
+                print!("RET NZ | ");
+                if !self.flags.z {
+                    let address = self.pop_word();
+                    print!("jump to {:#08X}", address);
+                    self.pc = address;
+                } else {
+                    print!("SKIP");
+                    self.pc += 1;
+                }
+
+                1
+            }
             0xC3 => {
                 // Jump to the address immediately after the current instruction
                 let data: [u8; 2] = self.next_word();
-                let pos: u16 = u16::from_be_bytes(data); // be because already switched
+                let pos: u16 = u16::from_le_bytes(data);
                 self.pc = pos;
                 1
             }
             0xC9 => {
                 // RET - pop word from stack and set PC to that
+                print!("RET NZ | ");
                 let address = self.pop_word();
-                print!("RET | {:#08X}", address);
+                print!("jump to {:#08X}", address);
                 self.pc = address;
                 1
             }
@@ -833,7 +1032,7 @@ impl Cpu {
             0xCD => {
                 // CALL a16 = push PC to stack and jump to next byte
                 self.push_word(self.pc + 1);
-                let address = u16::from_be_bytes(self.next_word()); // BigEndian because we already switched
+                let address = u16::from_le_bytes(self.next_word());
                 print!("CALL a16 | {:#08X}", address);
                 self.pc = address;
                 1
@@ -900,6 +1099,7 @@ impl Cpu {
                 1
             }
             0xEF => {
+                // RST 5
                 self.push_word(self.pc);
                 self.pc = 0x28;
                 4
@@ -935,10 +1135,13 @@ impl Cpu {
                 1
             }
             0xFF => {
-                panic!("test");
-                self.push_word(self.pc);
-                self.pc = self.cartridge.data[0x38] as u16;
-                1
+                // RST 7, we should never hit this
+                print!("RST 7");
+                self.debug_registers();
+                panic!();
+                // self.push_word(self.pc);
+                // self.pc = 0x38;
+                // 4
             }
             _ => {
                 println!();
@@ -949,9 +1152,21 @@ impl Cpu {
 
         println!();
 
-        if break_now {
+        if self.state == State::Stopped {
             self.debug_registers();
-            panic!();
+
+            let mut input = String::new(); // Take user input (to be parsed as clap args)
+            io::stdin()
+                .read_line(&mut input)
+                .expect("Error reading input.");
+
+            match input.as_str() {
+                "N" => (),
+                "C" => {
+                    self.state = State::Running;
+                }
+                _ => println!("C to continue or N for next"),
+            }
         }
 
         m_cycles
@@ -959,7 +1174,7 @@ impl Cpu {
 
     fn handle_word_opcode(&mut self) -> usize {
         let instruction = self.cartridge.data[self.pc as usize];
-        print!("{:#04X}", instruction);
+        print!("{:#04X} | ", instruction);
 
         let register_byte = instruction & 0x7;
         let register = match register_byte {
@@ -977,6 +1192,8 @@ impl Cpu {
                 panic!("Unknown 16-bit instruction register {:?}", register_byte);
             }
         };
+
+        print!("reg {:?} | ", register);
 
         match instruction & 0xC0 {
             0x00 => {
@@ -1034,10 +1251,19 @@ impl Cpu {
                     }
                 }
             }
-            // 0x40 => {
-            //     // BIT
-            //     1
-            // }
+            0x40 => {
+                // BIT
+                // divide by 8 and take remainder of mod 8
+                let bit = (instruction >> 3) & 0x7;
+                print!("bit {:#04X}", bit);
+
+                self.flags.z = (*self.get_register(register) >> bit) & 0x1 == 0x0;
+                self.flags.n = false;
+                self.flags.h = true;
+
+                self.pc += 1;
+                4
+            }
             // 0x80 => {
             //     // RES
             //     1
@@ -1065,7 +1291,7 @@ impl Cpu {
         let a = self.next_byte();
         let b = self.next_byte();
 
-        [b, a]
+        [a, b]
     }
 
     fn push_word(&mut self, word: u16) {
@@ -1115,14 +1341,25 @@ impl Cpu {
         self.a = (n & 0xff) as u8;
     }
 
+    fn sub_from_a_with_carry(&mut self, byte: u8) {
+        let carry: u16 = u16::from(self.flags.c);
+
+        let res= (self.a as u16) - (byte as u16 + carry);
+
+        self.flags.z = res == 0x0;
+        self.flags.h = ((self.a & 0x0F) - (byte & 0x0F) - (carry as u8)) > 0xf;
+        self.flags.c = res > 0xff;
+        self.flags.n = true;
+        self.a = (res & 0xff) as u8;
+    }
+
     /**
      * Add register to HL
      */
     fn add_to_reg_hl(&mut self, b: [u8; 2]) {
         let hl_u16 = u16::from_le_bytes(self.hl);
-        let b_u16 = u16::from_be_bytes(b);
+        let b_u16 = u16::from_le_bytes(b);
         let temp = hl_u16 as u32 + b_u16 as u32;
-        print!("{:#04X}, {:#04X}, {:#04X}", hl_u16, b_u16, temp);
         self.flags.n = false;
         self.flags.c = temp > 0xFFFF;
         self.flags.h = ((hl_u16 & 0xFFF) + (b_u16 & 0xFFF)) > 0xFFF;

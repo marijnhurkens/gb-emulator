@@ -11,8 +11,8 @@ use std::thread;
 use clap::Parser;
 use ggez::event::EventHandler;
 use ggez::graphics::{Color, DrawParam, Image, ImageFormat, Transform};
-use ggez::{event, graphics, Context, ContextBuilder, GameResult};
 use ggez::mint::Vector2;
+use ggez::{event, graphics, Context, ContextBuilder, GameResult};
 
 use crate::cartridge::Cartridge;
 use crate::cpu::Cpu;
@@ -30,6 +30,7 @@ type ScreenBuffer = Arc<Mutex<[u8; SCREEN_BUFFER_SIZE]>>;
 #[derive(Parser, Debug)]
 struct Args {
     rom_file: OsString,
+    break_point: Option<String>,
 }
 
 struct State {
@@ -39,22 +40,25 @@ struct State {
 fn main() {
     let args = Args::parse();
 
+    // read rom file
     let mut rom = File::open(&args.rom_file).unwrap();
     let mut data = vec![];
-
     rom.read_to_end(&mut data).unwrap();
 
     let cartridge = Cartridge::load_rom(data);
     let mut cpu = Cpu::load_cartridge(cartridge);
 
+    let break_point = args
+        .break_point
+        .map(|break_point| u16::from_str_radix(break_point.trim_start_matches("0x"), 16).unwrap());
+
     let screen_buffer: ScreenBuffer = Arc::new(Mutex::new([0; SCREEN_BUFFER_SIZE]));
 
     let cpu_screen_buffer = screen_buffer.clone();
     thread::spawn(move || {
-        cpu.run(cpu_screen_buffer.clone());
+        cpu.run(cpu_screen_buffer.clone(), break_point);
     });
 
-    // Make a Context.
     let (mut ctx, event_loop) = ContextBuilder::new("gb_emu", "")
         .build()
         .expect("Error creating context.");
@@ -64,7 +68,6 @@ fn main() {
     // use when setting your game up.
     let state = State::new(&mut ctx, screen_buffer);
 
-    // Run!
     event::run(ctx, event_loop, state);
 }
 
@@ -89,14 +92,11 @@ impl EventHandler for State {
             &*guard,
             ImageFormat::R8Unorm,
             SCREEN_WIDTH,
-            SCREEN_HEIGHT
+            SCREEN_HEIGHT,
         );
         drop(guard);
 
-        let scale = Vector2::<f32> {
-            x: 4.0,
-            y: 4.0
-        };
+        let scale = Vector2::<f32> { x: 4.0, y: 4.0 };
         canvas.draw(&image, DrawParam::new().scale(scale));
         canvas.finish(ctx)
     }
