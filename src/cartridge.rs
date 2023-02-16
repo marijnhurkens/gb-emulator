@@ -7,6 +7,7 @@ pub struct Cartridge {
 #[derive(Debug)]
 pub struct CartridgeHeader {
     pub title: String,
+    pub cgb_flag: u8,
     pub cartridge_type: u8,
     pub licensee_code: u8,
     pub rom_size: u8,
@@ -24,7 +25,8 @@ impl Cartridge {
 }
 
 fn load_header(data: &[u8]) -> CartridgeHeader {
-    let title = &data[0x0134..=0x0143];
+    let title = &data[0x0134..=0x0142];
+    let cgb_flag = data[0x0143];
     let cartridge_type = data[0x0147];
     let rom_size = data[0x0148];
     let ram_size = data[0x0149];
@@ -32,6 +34,7 @@ fn load_header(data: &[u8]) -> CartridgeHeader {
 
     CartridgeHeader {
         title: String::from_utf8(title.to_vec()).unwrap(),
+        cgb_flag,
         cartridge_type,
         rom_size,
         ram_size,

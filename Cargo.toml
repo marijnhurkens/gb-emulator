@@ -11,7 +11,11 @@ bitflags = "1.3"
 bitvec = "1.0"
 byteorder = "1.4"
 clap = { version = "4.0", features = ["derive"] }
-ggez = "0.8.1"
+ggez = "0.9.0-rc0"
+
+[patch.crates-io]
+ggez = { git = 'https://github.com/ggez/ggez.git', branch = "devel"  }
+bvh = {git = "https://github.com/dbenson24/bvh", branch = "master" }
 
 [profile.dev]
 opt-level = 1

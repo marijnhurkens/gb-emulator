@@ -5,10 +5,11 @@ use std::time::{Duration, Instant};
 
 use crate::cartridge::Cartridge;
 use crate::helpers::signed_add;
-use crate::memory::Memory;
+use crate::memory::{InterruptFlags, Memory, VideoMode};
 use crate::ScreenBuffer;
 
-const CPU_FREQ: f64 = 4_194_304.0;
+pub const CPU_FREQ: f64 = 4_194_304.0;
+const STACK_START: u16 = 0xfffe;
 
 #[derive(Debug)]
 pub struct Cpu {
@@ -39,6 +40,12 @@ pub struct Flags {
     h: bool,
 }
 
+impl Flags {
+    pub fn to_bits(&self) -> u8 {
+        self.c as u8 | (self.h as u8) << 1 | (self.n as u8) << 2 | (self.z as u8) << 3
+    }
+}
+
 #[derive(Eq, PartialEq, Debug)]
 enum State {
     Running,
@@ -49,7 +56,7 @@ impl Cpu {
     pub fn load_cartridge(cartridge: Cartridge) -> Self {
         Cpu {
             pc: 0x0100,
-            sp: 0xfffe,
+            sp: STACK_START,
             a: 0x01,
             bc: [0xff, 0x13],
             de: [0x00, 0xc1],
@@ -75,8 +82,6 @@ impl Cpu {
         self.break_point = break_point;
         self.state = State::Running;
 
-
-
         loop {
             // draw to screen
             let mut guard = screen_buffer.lock().unwrap();
@@ -85,6 +90,7 @@ impl Cpu {
 
             if self.pc as usize >= self.cartridge.data.len() {
                 self.debug_registers();
+                self.debug_stack();
                 panic!("PC out of bounds");
             }
 
@@ -94,7 +100,26 @@ impl Cpu {
             let t_cycles = self.process_instruction(instruction) * 4;
 
             for _ in 0..t_cycles {
-                self.memory.video.step();
+                self.memory.step();
+                let new_mode = self.memory.video.step();
+
+                // we've entered vblank, set Interrupt Flag
+                if let Some(VideoMode::VBlank) = new_mode {
+                    let interrupt_flag = self.memory.read_byte(0xFF0F);
+                    self.memory.write_byte(0xFF0F, interrupt_flag | 0x1);
+
+                    if self.interrupts_enabled
+                        && self
+                            .memory
+                            .interrupt_enable
+                            .intersects(InterruptFlags::VBLANK)
+                    {
+                        self.push_word(self.pc + 1);
+                        let address = 0x0040;
+                        println!("INT 40 VBLANK | {:#08X}", address);
+                        self.pc = address;
+                    }
+                }
             }
 
             // handle timing
@@ -243,6 +268,7 @@ impl Cpu {
             0x16 => {
                 // load next byte to d
                 let data = self.next_byte();
+                print!("ld d, ${:#02X} | ", data);
                 self.de[0] = data;
                 self.pc += 1;
                 2
@@ -255,9 +281,16 @@ impl Cpu {
             }
             0x19 => {
                 // add DE to HL
+                print!("add hl, de | ");
                 self.add_to_reg_hl(self.de);
                 self.pc += 1;
                 2
+            }
+            0x1C => {
+                // increment E by 1
+                self.de[1] = self.increment(self.de[1]);
+                self.pc += 1;
+                1
             }
             0x1D => {
                 // decrement E by 1
@@ -588,12 +621,14 @@ impl Cpu {
             }
             0x5E => {
                 // load memory at HL to E
+                print!("ld e, (hl) | ");
                 self.de[1] = self.memory.read_byte(u16::from_le_bytes(self.hl));
                 self.pc += 1;
                 1
             }
             0x5F => {
                 // load A to E
+                print!("ld e, a | ");
                 self.de[1] = self.a;
                 self.pc += 1;
                 1
@@ -629,32 +664,38 @@ impl Cpu {
                 1
             }
             0x70 => {
-                self.memory.write_byte(u16::from_le_bytes(self.hl), self.bc[0]);
+                self.memory
+                    .write_byte(u16::from_le_bytes(self.hl), self.bc[0]);
                 self.pc += 1;
                 2
             }
             0x71 => {
-                self.memory.write_byte(u16::from_le_bytes(self.hl), self.bc[1]);
+                self.memory
+                    .write_byte(u16::from_le_bytes(self.hl), self.bc[1]);
                 self.pc += 1;
                 2
             }
             0x72 => {
-                self.memory.write_byte(u16::from_le_bytes(self.hl), self.de[0]);
+                self.memory
+                    .write_byte(u16::from_le_bytes(self.hl), self.de[0]);
                 self.pc += 1;
                 2
             }
             0x73 => {
-                self.memory.write_byte(u16::from_le_bytes(self.hl), self.de[1]);
+                self.memory
+                    .write_byte(u16::from_le_bytes(self.hl), self.de[1]);
                 self.pc += 1;
                 2
             }
             0x74 => {
-                self.memory.write_byte(u16::from_le_bytes(self.hl), self.hl[0]);
+                self.memory
+                    .write_byte(u16::from_le_bytes(self.hl), self.hl[0]);
                 self.pc += 1;
                 2
             }
             0x75 => {
-                self.memory.write_byte(u16::from_le_bytes(self.hl), self.hl[1]);
+                self.memory
+                    .write_byte(u16::from_le_bytes(self.hl), self.hl[1]);
                 self.pc += 1;
                 2
             }
@@ -733,6 +774,7 @@ impl Cpu {
                 1
             }
             0x87 => {
+                print!("add a, a | ");
                 self.add(self.a);
                 self.pc += 1;
                 1
@@ -823,6 +865,12 @@ impl Cpu {
                 self.pc += 1;
                 1
             }
+            0x9E => {
+                let data = self.memory.read_byte(u16::from_le_bytes(self.hl));
+                self.sub_from_a_with_carry(data);
+                self.pc += 1;
+                2
+            }
             0xA0 => {
                 // AND A with B and store in A
                 self.a &= self.bc[0];
@@ -873,79 +921,92 @@ impl Cpu {
             }
             0xA8 => {
                 // XOR A with B and store in A
-                self.a ^= self.bc[0];
+                self.xor_a(self.bc[0]);
                 self.pc += 1;
                 1
             }
             0xA9 => {
                 // XOR A with C and store in A
-                self.a ^= self.bc[1];
+                self.xor_a(self.bc[1]);
                 self.pc += 1;
                 1
             }
             0xAA => {
                 // XOR A with D and store in A
-                self.a ^= self.de[0];
+                self.xor_a(self.de[0]);
                 self.pc += 1;
                 1
             }
             0xAB => {
                 // XOR A with E and store in A
-                self.a ^= self.de[1];
+                self.xor_a(self.de[1]);
                 self.pc += 1;
                 1
             }
             0xAC => {
                 // XOR A with H and store in A
-                self.a ^= self.hl[0];
+                self.xor_a(self.hl[0]);
                 self.pc += 1;
                 1
             }
             0xAD => {
                 // XOR A with L and store in A
-                self.a ^= self.hl[1];
+                self.xor_a(self.hl[1]);
                 self.pc += 1;
                 1
             }
             0xAF => {
                 // XOR the A register with itself
-                self.a ^= self.a;
+                self.xor_a(self.a);
                 self.pc += 1;
                 1
             }
             0xB0 => {
                 // OR A with B and store in A
-                self.a |= self.bc[0];
+                self.or_a(self.bc[0]);
                 self.pc += 1;
                 1
             }
             0xB1 => {
-                // OR C with C and store in A
-                self.a |= self.bc[1];
+                // OR A with C and store in A
+                self.or_a(self.bc[1]);
                 self.pc += 1;
                 1
             }
             0xB2 => {
                 // OR A with D and store in A
-                self.a |= self.de[0];
+                self.or_a(self.de[0]);
                 self.pc += 1;
                 1
             }
             0xB3 => {
                 // OR A with E and store in A
-                self.a |= self.de[1];
+                self.or_a(self.de[1]);
                 self.pc += 1;
                 1
             }
             0xB4 => {
                 // OR A with H and store in A
-                self.a |= self.hl[0];
+                self.or_a(self.hl[0]);
                 self.pc += 1;
                 1
             }
             0xB5 => {
                 // OR A with L and store in A
-                self.a |= self.hl[1];
+                self.or_a(self.hl[1]);
+                self.pc += 1;
+                1
+            }
+            0xB6 => {
+                // OR A with (HL) and store in A
+                let data = self.memory.read_byte(u16::from_le_bytes(self.hl));
+                self.or_a(data);
+                self.pc += 1;
+                2
+            }
+            0xB7 => {
+                // OR A with A and store in A
+                self.or_a(self.a);
                 self.pc += 1;
                 1
             }
@@ -1012,6 +1073,11 @@ impl Cpu {
                 self.pc = pos;
                 1
             }
+            0xC5 => {
+                self.push_word(u16::from_le_bytes(self.bc));
+                self.pc += 1;
+                4
+            }
             0xC9 => {
                 // RET - pop word from stack and set PC to that
                 print!("RET NZ | ");
@@ -1019,6 +1085,20 @@ impl Cpu {
                 print!("jump to {:#08X}", address);
                 self.pc = address;
                 1
+            }
+            0xCC => {
+                // CALL z,a16 = push PC to stack and jump to next byte IF z = 1
+                if self.flags.z {
+                    self.push_word(self.pc + 1);
+                    let address = u16::from_le_bytes(self.next_word());
+                    print!("CALL z,a16 | {:#08X}", address);
+                    self.pc = address;
+                    6
+                } else {
+                    print!("CALL z,a16 | SKIP");
+                    self.pc += 2;
+                    3
+                }
             }
             0xD5 => {
                 self.push_word(u16::from_le_bytes(self.de));
@@ -1063,6 +1143,7 @@ impl Cpu {
             }
             0xE1 => {
                 // pop stack to HL
+                print!("pop hl | ");
                 self.hl = self.pop_word().to_le_bytes();
                 self.pc += 1;
                 3
@@ -1115,6 +1196,20 @@ impl Cpu {
                 self.interrupts_enabled = false;
                 self.pc += 1;
                 1
+            }
+            0xF5 => {
+                self.push_word(u16::from_le_bytes([self.flags.to_bits(), self.a]));
+                self.pc += 1;
+                4
+            }
+            0xF8 => {
+                // LD HL, SP+s8
+                let int = i8::from_le_bytes([self.memory.read_byte(self.pc + 1)]);
+                let val = (self.sp as i16).checked_add(int as i16).expect("Fail");
+
+                self.hl = (val as u16).to_le_bytes();
+
+                3
             }
             0xF9 => {
                 // Load HL to SP
@@ -1328,6 +1423,16 @@ impl Cpu {
         byte
     }
 
+    fn xor_a(&mut self, byte: u8) {
+        self.a ^= byte;
+        self.flags.z = self.a == 0;
+    }
+
+    fn or_a(&mut self, byte: u8) {
+        self.a |= byte;
+        self.flags.z = self.a == 0;
+    }
+
     fn add_to_a_with_carry(&mut self, byte: u8) {
         let mut n = self.a as u16 + byte as u16;
         if self.flags.c {
@@ -1344,7 +1449,7 @@ impl Cpu {
     fn sub_from_a_with_carry(&mut self, byte: u8) {
         let carry: u16 = u16::from(self.flags.c);
 
-        let res= (self.a as u16) - (byte as u16 + carry);
+        let res = (self.a as u16) - (byte as u16 + carry);
 
         self.flags.z = res == 0x0;
         self.flags.h = ((self.a & 0x0F) - (byte & 0x0F) - (carry as u8)) > 0xf;
@@ -1429,6 +1534,14 @@ impl Cpu {
         println!("DE: {:#04X} {:#04X}", self.de[0], self.de[1]);
         println!("HL: {:#04X} {:#04X}", self.hl[0], self.hl[1]);
         println!("Flags: {:?}", self.flags);
+    }
+
+    fn debug_stack(&mut self) {
+        println!("--- STACK START ---");
+        for i in self.sp..=STACK_START {
+            println!("{:#04X}", self.memory.read_byte(i));
+        }
+        println!("--- STACK END ---");
     }
 
     fn swap_memory(&mut self, pos: u16) {
