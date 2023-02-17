@@ -106,7 +106,7 @@ impl Cpu {
                 // we've entered vblank, set Interrupt Flag
                 if let Some(VideoMode::VBlank) = new_mode {
                     let interrupt_flag = self.memory.read_byte(0xFF0F);
-                    self.memory.write_byte(0xFF0F, interrupt_flag | 0x1);
+                    self.memory.write_byte(0xFF0F, interrupt_flag | 0b0000_0001);
 
                     if self.interrupts_enabled
                         && self
@@ -114,6 +114,10 @@ impl Cpu {
                             .interrupt_enable
                             .intersects(InterruptFlags::VBLANK)
                     {
+                        self.interrupts_enabled = false;
+                        let interrupt_flag = self.memory.read_byte(0xFF0F);
+                        self.memory.write_byte(0xFF0F, interrupt_flag & 0b1111_1110);
+
                         self.push_word(self.pc + 1);
                         let address = 0x0040;
                         println!("INT 40 VBLANK | {:#08X}", address);
@@ -492,6 +496,24 @@ impl Cpu {
             }
             0x37 => {
                 self.flags.c = true;
+                self.pc += 1;
+                1
+            }
+            0x3B => {
+                // decrement SP by 1
+                self.sp -= 1;
+                self.pc += 1;
+                2
+            }
+            0x3C => {
+                // increment A by 1
+                self.a = self.increment(self.a);
+                self.pc += 1;
+                1
+            }
+            0x3D => {
+                // decrement L by 1
+                self.a = self.decrement(self.a);
                 self.pc += 1;
                 1
             }
@@ -1208,7 +1230,7 @@ impl Cpu {
                 let val = (self.sp as i16).checked_add(int as i16).expect("Fail");
 
                 self.hl = (val as u16).to_le_bytes();
-
+                self.pc += 2;
                 3
             }
             0xF9 => {
@@ -1232,6 +1254,7 @@ impl Cpu {
             0xFF => {
                 // RST 7, we should never hit this
                 print!("RST 7");
+                println!();
                 self.debug_registers();
                 panic!();
                 // self.push_word(self.pc);
@@ -1248,7 +1271,12 @@ impl Cpu {
         println!();
 
         if self.state == State::Stopped {
+            println!("--------- BREAK -----------");
             self.debug_registers();
+            println!("--------- FLAGS ------------");
+            self.debug_flags();
+            println!("--------- VIDEO ------------");
+            self.debug_video();
 
             let mut input = String::new(); // Take user input (to be parsed as clap args)
             io::stdin()
@@ -1534,6 +1562,18 @@ impl Cpu {
         println!("DE: {:#04X} {:#04X}", self.de[0], self.de[1]);
         println!("HL: {:#04X} {:#04X}", self.hl[0], self.hl[1]);
         println!("Flags: {:?}", self.flags);
+    }
+
+    fn debug_flags(&self) {
+        println!("Interrupts enabled: {:?}", self.interrupts_enabled);
+        println!("Interrupt enable flags: {:?}", self.memory.interrupt_enable);
+        println!("Interrupt flags: {:?}", self.memory.interrupt_flags);
+    }
+
+    fn debug_video(&self) {
+        println!("Video mode: {:?}",self.memory.video.mode);
+        println!("Video lcd control: {:?}",self.memory.video.lcd_control);
+        println!("Video lcd status: {:?}",self.memory.video.lcd_status);
     }
 
     fn debug_stack(&mut self) {

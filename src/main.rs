@@ -9,8 +9,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use clap::Parser;
+use ggez::conf::WindowSetup;
 use ggez::event::EventHandler;
-use ggez::graphics::{Color, DrawParam, Image, ImageFormat, Transform};
+use ggez::graphics::{Color, DrawParam, Image, ImageFormat};
 use ggez::mint::Vector2;
 use ggez::{event, graphics, Context, ContextBuilder, GameResult};
 
@@ -60,12 +61,10 @@ fn main() {
     });
 
     let (mut ctx, event_loop) = ContextBuilder::new("gb_emu", "")
+        .window_setup(WindowSetup::default().title("GB Emulator"))
         .build()
         .expect("Error creating context.");
 
-    // Create an instance of your event handler.
-    // Usually, you should provide it with the Context object to
-    // use when setting your game up.
     let state = State::new(&mut ctx, screen_buffer);
 
     event::run(ctx, event_loop, state);

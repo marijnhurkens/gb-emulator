@@ -1,9 +1,9 @@
 use std::io::{Cursor, Read};
 
 use bitflags::bitflags;
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use byteorder::{ReadBytesExt, WriteBytesExt};
 
-use crate::cpu::{Cpu, CPU_FREQ};
+use crate::cpu::{CPU_FREQ};
 use crate::SCREEN_BUFFER_SIZE;
 
 const MEM_SIZE: usize = 1024 * 128;
@@ -33,7 +33,7 @@ pub struct Memory {
     storage: Cursor<Vec<u8>>,
     rom: Vec<u8>,
     pub video: Video,
-    interrupt_flags: InterruptFlags,
+    pub interrupt_flags: InterruptFlags,
     pub interrupt_enable: InterruptFlags,
     div_step: u32,
     div: u8, // divider register
@@ -137,6 +137,7 @@ impl Memory {
         match pos {
             0x0000..=0x7FFF => print!("write rom, not implemented"),
             0x8000..=0x9FFF => self.write_byte_to_vram(pos - VRAM_START, byte),
+            0xA000..=0xBFFF => self.write_byte_to_storage(pos, byte), // ??
             0xC000..=0xDFFF => self.write_byte_to_storage(pos, byte), // wram
             0xFE00..=0xFE9F => self.write_byte_to_storage(pos, byte), // sprite attr table
             0xFEA0..=0xFEFF => self.write_byte_to_storage(pos, byte), // not usable
@@ -235,9 +236,9 @@ pub struct Video {
     scx: u8,
     pub mode: VideoMode,
     // lcdc
-    lcd_control: LcdControl,
+    pub lcd_control: LcdControl,
     // stat
-    lcd_status: LcdStatus,
+    pub lcd_status: LcdStatus,
     bg_palette: u8,
     obj_0_palette: u8,
     obj_1_palette: u8,
@@ -255,11 +256,11 @@ pub enum VideoMode {
 }
 
 bitflags! {
-    struct LcdStatus: u8 {
+    pub struct LcdStatus: u8 {
         const LYC = 0b00000100;
     }
 
-    struct LcdControl: u8 {
+    pub struct LcdControl: u8 {
         const LCD_ENABLE =              0b10000000;
         const WINDOW_TILE_MAP =         0b01000000;
         const WINDOW_ENABLE =           0b00100000;
