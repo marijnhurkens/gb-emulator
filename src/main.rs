@@ -22,6 +22,7 @@ mod cartridge;
 mod cpu;
 mod helpers;
 mod memory;
+mod instructions;
 
 const SCREEN_WIDTH: u32 = 160;
 const SCREEN_HEIGHT: u32 = 144;
