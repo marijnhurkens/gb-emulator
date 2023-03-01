@@ -58,7 +58,7 @@ fn main() {
 
     let cpu_screen_buffer = screen_buffer.clone();
     thread::spawn(move || {
-        cpu.run(cpu_screen_buffer.clone(), break_point);
+        cpu.run(Some(cpu_screen_buffer.clone()), break_point);
     });
 
     let (mut ctx, event_loop) = ContextBuilder::new("gb_emu", "")

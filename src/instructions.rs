@@ -1,87 +1,184 @@
 use std::fmt::{Display, Formatter};
 
+use crate::helpers;
+
 pub fn decode(data: &[u8], pc: u16) -> (Instruction, u16) {
     let opcode = data[pc as usize];
 
     match opcode {
-        0x00 => (Instruction::NOP, pc),
-        0x76 => (Instruction::HALT, pc),
-        // decode LD
+        0x00 => (Instruction::NOP, 1),
+        0x05 | 0x15 | 0x25 | 0x35 | 0x0D | 0x1D | 0x2D | 0x3D => {
+            let target = int_to_register((opcode + 2) >> 3).unwrap();
+            (Instruction::DEC(target), 1)
+        }
+        0x06 | 0x16 | 0x26 | 0x36 | 0x0E | 0x1E | 0x2E | 0x3E => {
+            let target = int_to_register((opcode + 1) >> 3).unwrap();
+            let operand = data[pc as usize + 1];
+            (
+                Instruction::LD(Load {
+                    source: Operand::ImmediateOperand(ImmediateOperand::D8(operand)),
+                    target,
+                }),
+                2,
+            )
+        }
+        0x01 | 0x11 | 0x21 | 0x31 => {
+            let target = match opcode {
+                0x01 => Operand::RegisterPair(RegisterPair(Register::B, Register::C)),
+                0x11 => Operand::RegisterPair(RegisterPair(Register::D, Register::E)),
+                0x21 => Operand::RegisterPair(RegisterPair(Register::H, Register::L)),
+                0x31 => Operand::MemoryLocation(MemoryLocation::HLmin),
+                _ => panic!("Should not happend"),
+            };
+            let operand = u16::from_le_bytes([data[pc as usize + 1], data[pc as usize + 2]]);
+            (
+                Instruction::LD(Load {
+                    source: Operand::ImmediateOperand(ImmediateOperand::D16(operand)),
+                    target,
+                }),
+                3,
+            )
+        }
+        0x02 | 0x12 | 0x22 | 0x32 => {
+            let target = match opcode {
+                0x02 => Operand::MemoryLocation(MemoryLocation::RegisterPair(RegisterPair(
+                    Register::B,
+                    Register::C,
+                ))),
+                0x12 => Operand::MemoryLocation(MemoryLocation::RegisterPair(RegisterPair(
+                    Register::D,
+                    Register::E,
+                ))),
+                0x22 => Operand::MemoryLocation(MemoryLocation::HLplus),
+                0x32 => Operand::MemoryLocation(MemoryLocation::HLmin),
+                _ => panic!("Should not happend"),
+            };
+            (
+                Instruction::LD(Load {
+                    source: Operand::Register(Register::A),
+                    target,
+                }),
+                1,
+            )
+        }
+        0x20 => {
+            let operand = helpers::u8_to_i8(data[pc as usize + 1]);
+            (
+                Instruction::JR(ImmediateOperand::S8(operand), Some(Condition::NZ)),
+                2,
+            )
+        }
+        0x76 => (Instruction::HALT, 1),
         0x40..=0x80 => {
-            let target = match (opcode & 0x38) >> 3 {
-                0x0 => InstructionTarget::RegisterTarget(RegisterTarget::B),
-                0x1 => InstructionTarget::RegisterTarget(RegisterTarget::C),
-                0x2 => InstructionTarget::RegisterTarget(RegisterTarget::D),
-                0x3 => InstructionTarget::RegisterTarget(RegisterTarget::E),
-                0x4 => InstructionTarget::RegisterTarget(RegisterTarget::H),
-                0x5 => InstructionTarget::RegisterTarget(RegisterTarget::L),
-                0x6 => InstructionTarget::MemoryTarget(MemoryTarget::HL),
-                0x7 => InstructionTarget::RegisterTarget(RegisterTarget::A),
-                _ => panic!("Unknown opcode {:#04X}", opcode),
-            };
+            let target =
+                int_to_register(opcode & 0x38).expect(&format!("Unknown opcode {:#04X}", opcode));
 
-            let source = match opcode & 0x07 {
-                0x0 => InstructionTarget::RegisterTarget(RegisterTarget::B),
-                0x1 => InstructionTarget::RegisterTarget(RegisterTarget::C),
-                0x2 => InstructionTarget::RegisterTarget(RegisterTarget::D),
-                0x3 => InstructionTarget::RegisterTarget(RegisterTarget::E),
-                0x4 => InstructionTarget::RegisterTarget(RegisterTarget::H),
-                0x5 => InstructionTarget::RegisterTarget(RegisterTarget::L),
-                0x6 => InstructionTarget::MemoryTarget(MemoryTarget::HL),
-                0x7 => InstructionTarget::RegisterTarget(RegisterTarget::A),
-                _ => panic!("Unknown opcode {:#04X}", opcode),
-            };
+            let source =
+                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
 
-            (Instruction::LD(Load { target, source }), pc)
+            (Instruction::LD(Load { target, source }), 1)
         }
         0xA8..=0xAF => {
-            let source = match opcode & 0x07 {
-                0x0 => InstructionTarget::RegisterTarget(RegisterTarget::B),
-                0x1 => InstructionTarget::RegisterTarget(RegisterTarget::C),
-                0x2 => InstructionTarget::RegisterTarget(RegisterTarget::D),
-                0x3 => InstructionTarget::RegisterTarget(RegisterTarget::E),
-                0x4 => InstructionTarget::RegisterTarget(RegisterTarget::H),
-                0x5 => InstructionTarget::RegisterTarget(RegisterTarget::L),
-                0x6 => InstructionTarget::MemoryTarget(MemoryTarget::HL),
-                0x7 => InstructionTarget::RegisterTarget(RegisterTarget::A),
-                _ => panic!("Unknown opcode {:#04X}", opcode),
-            };
+            let source =
+                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
 
-            (Instruction::XOR(source), pc)
+            (Instruction::XOR(source), 1)
         }
         0xC3 => {
-            let operand = u16::from_le_bytes([data[pc as usize +1], data[pc as usize+2]]);
-            (Instruction::JP(Operand::A16(operand)), pc+2)
-        },
+            let operand = u16::from_le_bytes([data[pc as usize + 1], data[pc as usize + 2]]);
+            (Instruction::JP(ImmediateOperand::A16(operand)), 3)
+        }
+        0xE0 => {
+            let operand = data[pc as usize + 1];
+            (
+                Instruction::LD(Load {
+                    target: Operand::MemoryLocation(MemoryLocation::ImmediateOperand(
+                        ImmediateOperand::A8(operand),
+                    )),
+                    source: Operand::Register(Register::A),
+                }),
+                2,
+            )
+        }
+        0xF0 => {
+            let operand = data[pc as usize + 1];
+            (
+                Instruction::LD(Load {
+                    target: Operand::Register(Register::A),
+                    source: Operand::MemoryLocation(MemoryLocation::ImmediateOperand(
+                        ImmediateOperand::A8(operand),
+                    )),
+                }),
+                2,
+            )
+        }
+        0xF3 => (Instruction::DI, 1),
+        0xFE => {
+            let operand = data[pc as usize + 1];
+            (
+                Instruction::CP(Operand::ImmediateOperand(ImmediateOperand::D8(operand))),
+                2,
+            )
+        }
         _ => panic!("Unknown opcode {:#04X}", opcode),
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+fn int_to_register(int: u8) -> Result<Operand, ()> {
+    match int {
+        0x0 => Ok(Operand::Register(Register::B)),
+        0x1 => Ok(Operand::Register(Register::C)),
+        0x2 => Ok(Operand::Register(Register::D)),
+        0x3 => Ok(Operand::Register(Register::E)),
+        0x4 => Ok(Operand::Register(Register::H)),
+        0x5 => Ok(Operand::Register(Register::L)),
+        0x6 => Ok(Operand::MemoryLocation(MemoryLocation::RegisterPair(
+            RegisterPair(Register::H, Register::L),
+        ))),
+        0x7 => Ok(Operand::Register(Register::A)),
+        _ => Err(()),
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum Instruction {
     NOP,
     HALT,
+    DEC(Operand),
     LD(Load),
-    XOR(InstructionTarget),
-    JP(Operand),
+    XOR(Operand),
+    JP(ImmediateOperand),
+    JR(ImmediateOperand, Option<Condition>),
+    DI,
+    CP(Operand),
 }
 
 impl Display for Instruction {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Instruction::NOP => write!(f, "NOP"),
-            Instruction::HALT => write!(f, "NOP"),
+            Instruction::HALT => write!(f, "HALT"),
+            Instruction::DEC(operand) => write!(f, "DEC {}", operand),
             Instruction::LD(load) => write!(f, "LD {}", load),
             Instruction::XOR(target) => write!(f, "XOR {}", target),
             Instruction::JP(operand) => write!(f, "JP {}", operand),
+            Instruction::JR(operand, condition) => {
+                if let Some(condition) = condition {
+                    write!(f, "JR {} {}", condition, operand)
+                } else {
+                    write!(f, "JR {}", operand)
+                }
+            }
+            Instruction::DI => write!(f, "DI"),
+            Instruction::CP(operand) => write!(f, "CP {}", operand),
         }
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub struct Load {
-    pub target: InstructionTarget,
-    pub source: InstructionTarget,
+    pub target: Operand,
+    pub source: Operand,
 }
 
 impl Display for Load {
@@ -90,24 +187,29 @@ impl Display for Load {
     }
 }
 
-
-#[derive(Debug, Eq, PartialEq)]
-pub enum InstructionTarget {
-    RegisterTarget(RegisterTarget),
-    MemoryTarget(MemoryTarget),
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub enum Operand {
+    Register(Register),
+    RegisterPair(RegisterPair),
+    MemoryLocation(MemoryLocation),
+    ImmediateOperand(ImmediateOperand),
+    StackPointer,
 }
 
-impl Display for InstructionTarget {
+impl Display for Operand {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            InstructionTarget::RegisterTarget(target) => write!(f, "{}", target),
-            InstructionTarget::MemoryTarget(target) => write!(f, "{}", target),
+            Operand::Register(register) => write!(f, "{}", register),
+            Operand::MemoryLocation(memory) => write!(f, "{}", memory),
+            Operand::ImmediateOperand(immediate_operand) => write!(f, "{}", immediate_operand),
+            Operand::RegisterPair(register_pair) => write!(f, "{}", register_pair),
+            Operand::StackPointer => write!(f, "SP"),
         }
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub enum RegisterTarget {
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub enum Register {
     B,
     C,
     D,
@@ -117,52 +219,70 @@ pub enum RegisterTarget {
     A,
 }
 
-impl Display for RegisterTarget {
+impl Display for Register {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self)
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub enum MemoryTarget {
-    HL,
-    HLplus,
-    HLmin,
-    BC,
-    DE,
-    Operand(Operand),
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub struct RegisterPair(pub Register, pub Register);
+
+impl Display for RegisterPair {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}{}", self.0, self.1)
+    }
 }
 
-impl Display for MemoryTarget {
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub enum MemoryLocation {
+    RegisterPair(RegisterPair),
+    ImmediateOperand(ImmediateOperand),
+    HLplus,
+    HLmin,
+}
+
+impl Display for MemoryLocation {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let display_name = match self {
-            MemoryTarget::HL => "HL",
-            MemoryTarget::HLplus => "HL+",
-            MemoryTarget::HLmin => "HL-",
-            MemoryTarget::BC => "BC",
-            MemoryTarget::DE => "DE",
-            MemoryTarget::Operand(operand) => return write!(f, "({})", operand),
+            MemoryLocation::HLplus => "HL+",
+            MemoryLocation::HLmin => "HL-",
+            MemoryLocation::ImmediateOperand(operand) => return write!(f, "({})", operand),
+            MemoryLocation::RegisterPair(register_pair) => return write!(f, "({})", register_pair),
         };
         write!(f, "({})", display_name)
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub enum Operand {
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub enum ImmediateOperand {
     A16(u16),
-    D16,
-    S8,
-    D8,
+    D16(u16),
+    S8(i8),
+    D8(u8),
+    A8(u8),
 }
 
-impl Display for Operand {
+impl Display for ImmediateOperand {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let display_name = match self {
-            Operand::A16(a16) => return write!(f,"a16[{:04X}]", a16),
-            Operand::S8 => "s8",
-            Operand::D8 => "d8",
-            Operand::D16 => "d16",
+        return match self {
+            ImmediateOperand::A16(a16) => write!(f, "a16[{:04X}, {}]", a16, a16),
+            ImmediateOperand::D16(d16) => write!(f, "d16[{:04X}, {}]", d16, d16),
+            ImmediateOperand::S8(s8) => write!(f, "s8[{:02X}, {}]", s8, s8),
+            ImmediateOperand::D8(d8) => write!(f, "d8[{:02X}, {}]", d8, d8),
+            ImmediateOperand::A8(a8) => write!(f, "a8[{:02X}, {}]", a8, a8),
         };
-        write!(f, "({})", display_name)
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub enum Condition {
+    NZ,
+    NC,
+}
+
+impl Display for Condition {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
     }
 }

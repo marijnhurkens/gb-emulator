@@ -6,3 +6,7 @@ pub fn signed_add(a: u16, b: u8) -> u16 {
         a - b_signed.unsigned_abs() as u16
     }
 }
+
+pub fn u8_to_i8(a: u8) -> i8 {
+    unsafe { std::mem::transmute(a) }
+}

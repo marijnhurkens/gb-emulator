@@ -5,7 +5,10 @@ use std::time::{Duration, Instant};
 
 use crate::cartridge::Cartridge;
 use crate::helpers::signed_add;
-use crate::instructions::{decode, Instruction, InstructionTarget, Load, Operand, RegisterTarget};
+use crate::instructions::{
+    decode, Condition, ImmediateOperand, Instruction, Load, MemoryLocation, Operand, Register,
+    RegisterPair,
+};
 use crate::memory::{InterruptFlags, Memory, VideoMode};
 use crate::ScreenBuffer;
 
@@ -81,7 +84,7 @@ impl Cpu {
         }
     }
 
-    pub fn run(&mut self, screen_buffer: ScreenBuffer, break_point: Option<u16>) {
+    pub fn run(&mut self, screen_buffer: Option<ScreenBuffer>, break_point: Option<u16>) {
         let title = &self.cartridge.header.title;
         println!("Running {:}", title);
 
@@ -90,9 +93,11 @@ impl Cpu {
 
         loop {
             // Draw to screen
-            let mut guard = screen_buffer.lock().unwrap();
-            (*guard) = self.memory.read_vram();
-            drop(guard);
+            if let Some(buffer) = &screen_buffer {
+                let mut guard = buffer.lock().unwrap();
+                (*guard) = self.memory.read_vram();
+                drop(guard);
+            }
 
             // Catch PC out of bounds
             if self.pc as usize >= self.cartridge.data.len() {
@@ -101,8 +106,9 @@ impl Cpu {
                 panic!("PC out of bounds");
             }
 
-            let (instruction, new_pc) = decode(&self.cartridge.data, self.pc);
-            self.pc = new_pc.wrapping_add(1);
+            let (instruction, length) = decode(&self.cartridge.data, self.pc);
+            print!("{:#08X} | {} | ", self.pc, instruction);
+            self.pc = self.pc.wrapping_add(length);
 
             let start_time = Instant::now();
             let t_cycles = self.process_instruction(instruction) * 4;
@@ -150,8 +156,6 @@ impl Cpu {
      * Runs the next instruction and returns the cycle cost divided by 4 (M-cycles)
      */
     fn process_instruction(&mut self, instruction: Instruction) -> usize {
-        print!("{:#08X} | {} | ", self.pc, instruction);
-
         if let Some(break_point) = self.break_point {
             if break_point == self.pc {
                 self.state = CpuState::Stopped;
@@ -162,8 +166,15 @@ impl Cpu {
             Instruction::LD(load) => self.ld(load),
             Instruction::NOP => 1,
             Instruction::HALT => panic!("HALT"),
+            Instruction::DEC(operand) => self.decrement(operand),
             Instruction::JP(operand) => self.jump(operand),
             Instruction::XOR(source) => self.xor_a(source),
+            Instruction::JR(operand, condition) => self.jump_relative(operand, condition),
+            Instruction::DI => {
+                self.interrupts_enabled = false;
+                1
+            }
+            Instruction::CP(operand) => self.compare_a(operand),
             // 0x00 => {
             //     self.pc += 1;
             //     0
@@ -1408,19 +1419,88 @@ impl Cpu {
     // }
 
     fn ld(&mut self, load: Load) -> usize {
-        let (source_register, source_cycles) = match load.source {
-            InstructionTarget::RegisterTarget(source) => (self.get_register(source), 1),
-            InstructionTarget::MemoryTarget(_) => panic!("khg"),
-        };
-
-        let (target_register, target_cycles) = match load.target {
-            InstructionTarget::RegisterTarget(source) => (self.get_register_mut(source), 1),
-            InstructionTarget::MemoryTarget(_) => panic!("khg"),
-        };
-
-        *target_register = source_register;
-
-        source_cycles.max(target_cycles)
+        match load.source {
+            Operand::Register(source) => {
+                let source_data = self.get_register(source);
+                match load.target {
+                    Operand::Register(target) => {
+                        self.set_register(target, source_data);
+                        1
+                    }
+                    Operand::MemoryLocation(memory_location) => match memory_location {
+                        MemoryLocation::RegisterPair(pair) => {
+                            let location = self.get_register_pair(pair);
+                            self.memory.write_byte(location, source_data);
+                            2
+                        }
+                        MemoryLocation::ImmediateOperand(operand) => match operand {
+                            ImmediateOperand::A8(operand) => {
+                                self.memory
+                                    .write_byte(u16::from_le_bytes([operand, 0xff]), source_data);
+                                3
+                            }
+                            _ => panic!("not implemented"),
+                        },
+                        MemoryLocation::HLplus => {
+                            let pair = RegisterPair(Register::H, Register::L);
+                            let location = self.get_register_pair(pair);
+                            self.memory.write_byte(location, source_data);
+                            self.set_register_pair(pair, location.overflowing_add(1).0);
+                            2
+                        }
+                        MemoryLocation::HLmin => {
+                            let pair = RegisterPair(Register::H, Register::L);
+                            let location = self.get_register_pair(pair);
+                            self.memory.write_byte(location, source_data);
+                            self.set_register_pair(pair, location.overflowing_sub(1).0);
+                            2
+                        }
+                    },
+                    _ => panic!("not implemented"),
+                }
+            }
+            Operand::MemoryLocation(MemoryLocation::ImmediateOperand(ImmediateOperand::A8(
+                operand,
+            ))) => {
+                let data = self.memory.read_byte(u16::from_le_bytes([operand, 0xff]));
+                match load.target {
+                    Operand::Register(register) => {
+                        self.set_register(register, data);
+                        2
+                    }
+                    _ => panic!("not implemented"),
+                }
+            }
+            Operand::RegisterPair(source) => match load.target {
+                Operand::RegisterPair(target) => {
+                    self.set_register_pair(target, self.get_register_pair(source));
+                    2
+                }
+                _ => panic!("not implemented"),
+            },
+            Operand::ImmediateOperand(ImmediateOperand::D8(operand)) => match load.target {
+                Operand::Register(target) => {
+                    self.set_register(target, operand);
+                    2
+                }
+                _ => panic!("not implemented"),
+            },
+            Operand::ImmediateOperand(ImmediateOperand::A16(operand)) => match load.target {
+                Operand::RegisterPair(target) => {
+                    self.set_register_pair(target, operand);
+                    3
+                }
+                _ => panic!("not implemented"),
+            },
+            Operand::ImmediateOperand(ImmediateOperand::D16(operand)) => match load.target {
+                Operand::RegisterPair(target) => {
+                    self.set_register_pair(target, operand);
+                    3
+                }
+                _ => panic!("not implemented"),
+            },
+            _ => panic!("not implemented"),
+        }
     }
 
     /** Increments program counter */
@@ -1462,20 +1542,40 @@ impl Cpu {
     }
 
     /** subtract 1 from byte, does not set carry flag */
-    fn decrement(&mut self, byte: u8) -> u8 {
-        let (byte, _) = byte.overflowing_sub(1);
-        self.flags.z = byte == 0;
-        self.flags.n = true;
-        self.flags.h = (byte & 0xF) == 0xF;
+    fn decrement(&mut self, operand: Operand) -> usize {
+        let mut byte = 0;
+        let mut cycles = 1;
+        match operand {
+            Operand::Register(register) => {
+                byte = self.get_register(register);
+                byte = byte.overflowing_sub(1).0;
+                self.set_register(register, byte);
 
-        byte
+                self.flags.z = byte == 0;
+                self.flags.n = true;
+                self.flags.h = (byte & 0xF) == 0xF;
+            }
+            Operand::RegisterPair(_) => panic!("not implemented"),
+            Operand::MemoryLocation(_) => panic!("not implemented"),
+            Operand::ImmediateOperand(_) => panic!("not implemented"),
+            Operand::StackPointer => {
+                self.sp = self.sp.wrapping_sub(1);
+                cycles = 2;
+            }
+        }
+
+        cycles
     }
 
-    fn xor_a(&mut self, source: InstructionTarget) -> usize {
+    fn xor_a(&mut self, source: Operand) -> usize {
         let (source_data, cycles) = match source {
-            InstructionTarget::RegisterTarget(source) =>  (self.get_register(source), 1),
-            InstructionTarget::MemoryTarget(_) => panic!("khg") // 2 cycles
+            Operand::Register(source) => (self.get_register(source), 1),
+            Operand::MemoryLocation(_) => panic!("not implemented"), // 2 cycles
+            Operand::RegisterPair(_) => panic!("Should not happen"),
+            Operand::ImmediateOperand(_) => panic!("not implemented"),
+            Operand::StackPointer => panic!("not implemented"),
         };
+
         self.a ^= source_data;
         self.flags.z = self.a == 0;
         cycles
@@ -1535,16 +1635,29 @@ impl Cpu {
     }
 
     /** subtract byte from register A */
-    fn subtract(&mut self, byte: u8) {
-        self.compare_a(byte);
-        (self.a, _) = self.a.overflowing_sub(byte);
-    }
+    // fn subtract(&mut self, byte: u8) {
+    //     self.compare_a(byte);
+    //     (self.a, _) = self.a.overflowing_sub(byte);
+    // }
 
-    fn compare_a(&mut self, byte: u8) {
-        self.flags.z = self.a == byte;
+    fn compare_a(&mut self, operand: Operand) -> usize {
+        let mut cycles = 1;
+
+        let data = match operand {
+            Operand::Register(register) => self.get_register(register),
+            Operand::ImmediateOperand(ImmediateOperand::D8(operand)) => {
+                cycles = 2;
+                operand
+            }
+            _ => panic!("not implemented"),
+        };
+
+        self.flags.z = self.a == data;
         self.flags.n = true;
-        self.flags.h = (self.a & 0xF) < (byte & 0xF);
-        self.flags.c = self.a < byte;
+        self.flags.h = (self.a & 0xF) < (data & 0xF);
+        self.flags.c = self.a < data;
+
+        cycles
     }
 
     /**
@@ -1575,16 +1688,41 @@ impl Cpu {
         self.a = byte;
     }
 
-    fn jump(&mut self, operand: Operand) -> usize {
+    fn jump(&mut self, operand: ImmediateOperand) -> usize {
         match operand {
-            Operand::A16(a16) => self.pc = a16,
-            _ => panic!("Unknown operand type for JP instruction")
+            ImmediateOperand::A16(a16) => self.pc = a16,
+            _ => panic!("Unknown operand type for JP instruction"),
         }
         4
     }
 
-    fn relative_jump(&mut self, data: u8) {
-        self.pc = signed_add(self.pc, data);
+    fn jump_relative(&mut self, operand: ImmediateOperand, condition: Option<Condition>) -> usize {
+        let ImmediateOperand::S8(operand) = operand else {
+            panic!("Invalid operand for JR");
+        };
+
+        if let Some(condition) = condition {
+            match condition {
+                Condition::NZ => {
+                    if self.flags.z == false {
+                        self.pc = self.pc.wrapping_add_signed(operand as i16)
+                    } else {
+                        return 2;
+                    }
+                }
+                Condition::NC => {
+                    if self.flags.c == false {
+                        self.pc = self.pc.wrapping_add_signed(operand as i16)
+                    } else {
+                        return 2;
+                    }
+                }
+            }
+        } else {
+            self.pc = self.pc.wrapping_add_signed(operand as i16);
+        }
+
+        3
     }
 
     fn debug_registers(&self) {
@@ -1643,42 +1781,65 @@ impl Cpu {
     //
     //     *reg = upper | lower;
     // }
-    //
-    fn get_register(&self, reg: RegisterTarget) -> u8 {
+
+    fn get_register(&self, reg: Register) -> u8 {
         match reg {
-            RegisterTarget::B => self.b,
-            RegisterTarget::C => self.c,
-            RegisterTarget::D => self.d,
-            RegisterTarget::E => self.e,
-            RegisterTarget::H => self.h,
-            RegisterTarget::L => self.l,
-            RegisterTarget::A => self.a,
+            Register::B => self.b,
+            Register::C => self.c,
+            Register::D => self.d,
+            Register::E => self.e,
+            Register::H => self.h,
+            Register::L => self.l,
+            Register::A => self.a,
         }
     }
 
-    fn get_register_mut(&mut self, reg: RegisterTarget) -> &mut u8 {
+    fn get_register_pair(&self, reg_pair: RegisterPair) -> u16 {
+        u16::from_le_bytes([self.get_register(reg_pair.0), self.get_register(reg_pair.1)])
+    }
+
+    fn set_register(&mut self, reg: Register, data: u8) {
         match reg {
-            RegisterTarget::B => &mut self.b,
-            RegisterTarget::C => &mut self.c,
-            RegisterTarget::D => &mut self.d,
-            RegisterTarget::E => &mut self.e,
-            RegisterTarget::H => &mut self.h,
-            RegisterTarget::L => &mut self.l,
-            RegisterTarget::A => &mut self.a,
-        }
+            Register::B => self.b = data,
+            Register::C => self.c = data,
+            Register::D => self.d = data,
+            Register::E => self.e = data,
+            Register::H => self.h = data,
+            Register::L => self.l = data,
+            Register::A => self.a = data,
+        };
+    }
+
+    fn set_register_pair(&mut self, reg_pair: RegisterPair, data: u16) {
+        let data = u16::to_le_bytes(data);
+
+        self.set_register(reg_pair.0, data[0]);
+        self.set_register(reg_pair.1, data[1]);
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use crate::{Cartridge, Cpu};
-//
-//     #[test]
-//     fn it_works() {
-//         let cartridge = Cartridge::load_rom([
-//
-//         ])
-//         let cpu = Cpu::load_cartridge()
-//         assert_eq!(result, 4);
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    use crate::cartridge::CartridgeHeader;
+    use crate::{Cartridge, Cpu};
+
+    #[test]
+    fn it_handles_registers() {
+        let cartridge = Cartridge {
+            header: CartridgeHeader {
+                title: "test".to_string(),
+                cgb_flag: 0,
+                cartridge_type: 0,
+                licensee_code: 0,
+                rom_size: 0,
+                ram_size: 0,
+            },
+            data: vec![0x21, 0x01, 0x00],
+        };
+
+        let mut cpu = Cpu::load_cartridge(cartridge);
+        cpu.pc = 0;
+        cpu.run(None, None);
+        dbg!(cpu);
+    }
+}
