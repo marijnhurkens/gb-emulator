@@ -7,27 +7,12 @@ pub fn decode(data: &[u8], pc: u16) -> (Instruction, u16) {
 
     match opcode {
         0x00 => (Instruction::NOP, 1),
-        0x05 | 0x15 | 0x25 | 0x35 | 0x0D | 0x1D | 0x2D | 0x3D => {
-            let target = int_to_register((opcode + 2) >> 3).unwrap();
-            (Instruction::DEC(target), 1)
-        }
-        0x06 | 0x16 | 0x26 | 0x36 | 0x0E | 0x1E | 0x2E | 0x3E => {
-            let target = int_to_register((opcode + 1) >> 3).unwrap();
-            let operand = data[pc as usize + 1];
-            (
-                Instruction::LD(Load {
-                    source: Operand::ImmediateOperand(ImmediateOperand::D8(operand)),
-                    target,
-                }),
-                2,
-            )
-        }
         0x01 | 0x11 | 0x21 | 0x31 => {
             let target = match opcode {
                 0x01 => Operand::RegisterPair(RegisterPair(Register::B, Register::C)),
                 0x11 => Operand::RegisterPair(RegisterPair(Register::D, Register::E)),
                 0x21 => Operand::RegisterPair(RegisterPair(Register::H, Register::L)),
-                0x31 => Operand::MemoryLocation(MemoryLocation::HLmin),
+                0x31 => Operand::StackPointer,
                 _ => panic!("Should not happend"),
             };
             let operand = u16::from_le_bytes([data[pc as usize + 1], data[pc as usize + 2]]);
@@ -61,6 +46,53 @@ pub fn decode(data: &[u8], pc: u16) -> (Instruction, u16) {
                 1,
             )
         }
+        0x05 | 0x15 | 0x25 | 0x35 | 0x0D | 0x1D | 0x2D | 0x3D => {
+            let target = int_to_register((opcode + 2) >> 3).unwrap();
+            (Instruction::DEC(target), 1)
+        }
+        0x06 | 0x16 | 0x26 | 0x36 | 0x0E | 0x1E | 0x2E | 0x3E => {
+            let target = int_to_register((opcode + 1) >> 3).unwrap();
+            let operand = data[pc as usize + 1];
+            (
+                Instruction::LD(Load {
+                    source: Operand::ImmediateOperand(ImmediateOperand::D8(operand)),
+                    target,
+                }),
+                2,
+            )
+        }
+        0x0A | 0x1A | 0x2A | 0x3A => {
+            let source = match opcode {
+                0x0A => Operand::MemoryLocation(MemoryLocation::RegisterPair(RegisterPair(
+                    Register::B,
+                    Register::C,
+                ))),
+                0x1A => Operand::MemoryLocation(MemoryLocation::RegisterPair(RegisterPair(
+                    Register::D,
+                    Register::E,
+                ))),
+                0x2A => Operand::MemoryLocation(MemoryLocation::HLplus),
+                0x3A => Operand::MemoryLocation(MemoryLocation::HLmin),
+                _ => panic!("Should not happend"),
+            };
+            (
+                Instruction::LD(Load {
+                    source,
+                    target: Operand::Register(Register::A),
+                }),
+                1,
+            )
+        }
+        0x0B | 0x1B | 0x2B | 0x3B => {
+            let target = match opcode {
+                0x0B => Operand::RegisterPair(RegisterPair(Register::B, Register::C)),
+                0x1B => Operand::RegisterPair(RegisterPair(Register::D, Register::E)),
+                0x2B => Operand::RegisterPair(RegisterPair(Register::H, Register::L)),
+                0x3B => Operand::StackPointer,
+                _ => panic!("Should not happend"),
+            };
+            (Instruction::DEC(target), 1)
+        }
         0x20 => {
             let operand = helpers::u8_to_i8(data[pc as usize + 1]);
             (
@@ -71,7 +103,7 @@ pub fn decode(data: &[u8], pc: u16) -> (Instruction, u16) {
         0x76 => (Instruction::HALT, 1),
         0x40..=0x80 => {
             let target =
-                int_to_register(opcode & 0x38).expect(&format!("Unknown opcode {:#04X}", opcode));
+                int_to_register((opcode & 0xf0) >> 4).expect(&format!("Unknown opcode {:#04X}", opcode));
 
             let source =
                 int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
@@ -84,9 +116,18 @@ pub fn decode(data: &[u8], pc: u16) -> (Instruction, u16) {
 
             (Instruction::XOR(source), 1)
         }
+        0xB0 ..= 0xB7 => {
+            let source =
+                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+            (Instruction::OR(source), 1)
+        }
         0xC3 => {
             let operand = u16::from_le_bytes([data[pc as usize + 1], data[pc as usize + 2]]);
             (Instruction::JP(ImmediateOperand::A16(operand)), 3)
+        }
+        0xCD => {
+            let operand = u16::from_le_bytes([data[pc as usize + 1], data[pc as usize + 2]]);
+            (Instruction::Call(ImmediateOperand::A16(operand), None), 3)
         }
         0xE0 => {
             let operand = data[pc as usize + 1];
@@ -100,6 +141,32 @@ pub fn decode(data: &[u8], pc: u16) -> (Instruction, u16) {
                 2,
             )
         }
+        0xEA => {
+            let operand = u16::from_le_bytes([data[pc as usize + 1], data[pc as usize + 2]]);
+            (
+                Instruction::LD(Load {
+                    target: Operand::MemoryLocation(MemoryLocation::ImmediateOperand(
+                        ImmediateOperand::A16(operand),
+                    )),
+                    source: Operand::Register(Register::A),
+                }),
+                3,
+            )
+        }
+        0xE2 => (
+            Instruction::LD(Load {
+                target: Operand::MemoryLocation(MemoryLocation::Register(Register::C)),
+                source: Operand::Register(Register::A),
+            }),
+            2,
+        ),
+        0xF2 => (
+            Instruction::LD(Load {
+                target: Operand::Register(Register::A),
+                source: Operand::MemoryLocation(MemoryLocation::Register(Register::C)),
+            }),
+            2,
+        ),
         0xF0 => {
             let operand = data[pc as usize + 1];
             (
@@ -110,6 +177,18 @@ pub fn decode(data: &[u8], pc: u16) -> (Instruction, u16) {
                     )),
                 }),
                 2,
+            )
+        }
+        0xFA => {
+            let operand = u16::from_le_bytes([data[pc as usize + 1], data[pc as usize + 2]]);
+            (
+                Instruction::LD(Load {
+                    target: Operand::Register(Register::A),
+                    source: Operand::MemoryLocation(MemoryLocation::ImmediateOperand(
+                        ImmediateOperand::A16(operand),
+                    )),
+                }),
+                3,
             )
         }
         0xF3 => (Instruction::DI, 1),
@@ -147,10 +226,12 @@ pub enum Instruction {
     DEC(Operand),
     LD(Load),
     XOR(Operand),
+    OR(Operand),
     JP(ImmediateOperand),
     JR(ImmediateOperand, Option<Condition>),
     DI,
     CP(Operand),
+    Call(ImmediateOperand, Option<Condition>),
 }
 
 impl Display for Instruction {
@@ -161,6 +242,7 @@ impl Display for Instruction {
             Instruction::DEC(operand) => write!(f, "DEC {}", operand),
             Instruction::LD(load) => write!(f, "LD {}", load),
             Instruction::XOR(target) => write!(f, "XOR {}", target),
+            Instruction::OR(target) => write!(f, "OR {}", target),
             Instruction::JP(operand) => write!(f, "JP {}", operand),
             Instruction::JR(operand, condition) => {
                 if let Some(condition) = condition {
@@ -171,6 +253,13 @@ impl Display for Instruction {
             }
             Instruction::DI => write!(f, "DI"),
             Instruction::CP(operand) => write!(f, "CP {}", operand),
+            Instruction::Call(operand, condition) => {
+                if let Some(condition) = condition {
+                    write!(f, "CALL {} {}", condition, operand)
+                } else {
+                    write!(f, "CALL {}", operand)
+                }
+            }
         }
     }
 }
@@ -236,6 +325,7 @@ impl Display for RegisterPair {
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum MemoryLocation {
+    Register(Register),
     RegisterPair(RegisterPair),
     ImmediateOperand(ImmediateOperand),
     HLplus,
@@ -249,6 +339,7 @@ impl Display for MemoryLocation {
             MemoryLocation::HLmin => "HL-",
             MemoryLocation::ImmediateOperand(operand) => return write!(f, "({})", operand),
             MemoryLocation::RegisterPair(register_pair) => return write!(f, "({})", register_pair),
+            MemoryLocation::Register(register) => return write!(f, "({})", register),
         };
         write!(f, "({})", display_name)
     }
@@ -277,6 +368,8 @@ impl Display for ImmediateOperand {
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum Condition {
+    Z,
+    C,
     NZ,
     NC,
 }

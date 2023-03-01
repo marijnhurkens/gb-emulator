@@ -90,7 +90,7 @@ impl Memory {
             }
         };
 
-        print!("read byte {:#08X} -> {:#04X} | ", pos, res);
+        //print!("read byte {:#08X} -> {:#04X} | ", pos, res);
 
         res
     }
@@ -124,18 +124,18 @@ impl Memory {
     }
 
     fn write_byte_to_vram(&mut self, pos: u16, byte: u8) {
-        print!(
-            "write byte vram {:#08X} -> {:#04X} | ",
-            pos + VRAM_START,
-            byte
-        );
+        // print!(
+        //     "write byte vram {:#08X} -> {:#04X} | ",
+        //     pos + VRAM_START,
+        //     byte
+        // );
         self.video.vram.set_position(pos as u64);
         self.video.vram.write_u8(byte).unwrap();
     }
 
     pub fn write_byte(&mut self, pos: u16, byte: u8) {
         match pos {
-            0x0000..=0x7FFF => print!("write rom, not implemented"),
+            0x0000..=0x7FFF => (),//print!("write rom, not implemented |"),
             0x8000..=0x9FFF => self.write_byte_to_vram(pos - VRAM_START, byte),
             0xA000..=0xBFFF => self.write_byte_to_storage(pos, byte), // ??
             0xC000..=0xDFFF => self.write_byte_to_storage(pos, byte), // wram
@@ -155,18 +155,18 @@ impl Memory {
     }
 
     fn write_interrupt_flags(&mut self, byte: u8) {
-        print!("write interrupt flags {:#04X} | ", byte);
+        //print!("write interrupt flags {:#04X} | ", byte);
         self.interrupt_flags = InterruptFlags::from_bits(byte).unwrap();
     }
 
     fn write_byte_to_storage(&mut self, pos: u16, byte: u8) {
-        print!("write byte {:#08X} -> {:#04X} | ", pos, byte);
+        //print!("write byte {:#08X} -> {:#04X} | ", pos, byte);
         self.storage.set_position(pos as u64);
         self.storage.write_u8(byte).unwrap()
     }
 
     pub fn write_word(&mut self, pos: u16, word: u16) {
-        print!("write word {:#08X} -> {:#08X} | ", pos, word);
+        //print!("write word {:#08X} -> {:#08X} | ", pos, word);
 
         let bytes = word.to_le_bytes();
         self.write_byte(pos, bytes[0]);
@@ -197,12 +197,12 @@ impl Memory {
     fn write_io_register(&mut self, pos: u16, byte: u8) {
         match pos {
             0xFF00 => self.buttons = byte,
-            0xFF01 | 0xFF02 => print!("Serial transfer register set, not implemented"),
+            0xFF01 | 0xFF02 => println!("Serial transfer register set, not implemented"),
             0xFF04 => self.div = 0, // always resets when written
             0xFF05 => self.tima = byte,
             0xFF06 => self.tma = byte,
             0xFF07 => self.tac = TimerControl::from_bits(byte).unwrap(),
-            0xFF10..=0xFF26 => print!("Audio register set, not implemented"),
+            0xFF10..=0xFF26 => println!("Audio register set, not implemented"),
             0xFF40 => self.video.lcd_control = LcdControl::from_bits(byte).unwrap(),
             0xFF41 => self.video.lcd_status = LcdStatus::from_bits(byte).unwrap(),
             0xFF42 => self.video.scy = byte,
