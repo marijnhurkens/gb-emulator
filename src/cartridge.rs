@@ -1,3 +1,5 @@
+use tracing::{event, Level};
+
 #[derive(Debug)]
 pub struct Cartridge {
     pub header: CartridgeHeader,
@@ -44,7 +46,7 @@ fn load_header(data: &[u8]) -> CartridgeHeader {
 
 fn verify_header(data: &[u8]) -> Result<(), &str> {
     let checksum = data[0x014D];
-    println!("Verifying header checksum..");
+    event!(Level::INFO, "Verifying header checksum..",);
     let mut x: u8 = 0;
 
     for item in data.iter().take(0x014C + 1).skip(0x0134) {

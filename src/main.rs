@@ -4,7 +4,7 @@ extern crate core;
 
 use std::ffi::OsString;
 use std::fs::File;
-use std::io::Read;
+use std::io::{stdout, Read};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -14,6 +14,10 @@ use ggez::event::EventHandler;
 use ggez::graphics::{Color, DrawParam, Image, ImageFormat};
 use ggez::mint::Vector2;
 use ggez::{event, graphics, Context, ContextBuilder, GameResult};
+use tracing::Level;
+use tracing_subscriber::fmt::writer::MakeWriterExt;
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::Registry;
 
 use crate::cartridge::Cartridge;
 use crate::cpu::Cpu;
@@ -21,8 +25,8 @@ use crate::cpu::Cpu;
 mod cartridge;
 mod cpu;
 mod helpers;
-mod memory;
 mod instructions;
+mod memory;
 
 const SCREEN_WIDTH: u32 = 160;
 const SCREEN_HEIGHT: u32 = 144;
@@ -32,7 +36,12 @@ type ScreenBuffer = Arc<Mutex<[u8; SCREEN_BUFFER_SIZE]>>;
 #[derive(Parser, Debug)]
 struct Args {
     rom_file: OsString,
+
+    #[arg(short, long)]
     break_point: Option<String>,
+
+    #[arg(short, long)]
+    log: Option<Level>,
 }
 
 struct State {
@@ -41,6 +50,15 @@ struct State {
 
 fn main() {
     let args = Args::parse();
+
+    let stdout_log = tracing_subscriber::fmt::layer()
+        .with_writer(stdout.with_max_level(args.log.unwrap_or(Level::ERROR)))
+        .with_file(false)
+        .with_line_number(false)
+        .pretty();
+
+    let my_subscriber = Registry::default().with(stdout_log);
+    tracing::subscriber::set_global_default(my_subscriber).expect("setting tracing default failed");
 
     // read rom file
     let mut rom = File::open(&args.rom_file).unwrap();

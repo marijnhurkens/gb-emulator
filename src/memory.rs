@@ -2,8 +2,9 @@ use std::io::{Cursor, Read};
 
 use bitflags::bitflags;
 use byteorder::{ReadBytesExt, WriteBytesExt};
+use tracing::{event, Level};
 
-use crate::cpu::{CPU_FREQ};
+use crate::cpu::CPU_FREQ;
 use crate::SCREEN_BUFFER_SIZE;
 
 const MEM_SIZE: usize = 1024 * 128;
@@ -42,6 +43,8 @@ pub struct Memory {
     tma: u8,  // timer counter modulo
     tac: TimerControl,
     buttons: u8,
+    bcps: u8,
+    bcpd: u8,
 }
 
 impl Memory {
@@ -59,6 +62,8 @@ impl Memory {
             tma: 0,
             tac: TimerControl::TIMER_ENABLE,
             buttons: 0b11110000,
+            bcps: 0,
+            bcpd: 0,
         }
     }
 
@@ -77,6 +82,7 @@ impl Memory {
             0xC000..=0xCFFF => self.read_byte_from_storage(pos),
             0xD000..=0xDFFF => self.read_byte_from_storage(pos),
             0xE000..=0xFDFF => self.read_byte_from_storage(pos - 0x2000),
+            0xFE00..=0xFE9F => self.read_byte_from_storage(pos), // todo implement oam
             0xFF00..=0xFF07 => self.read_io_register(pos),
             0xFF0F => self.interrupt_flags.bits,
             0xFF10..=0xFF7F => self.read_io_register(pos),
@@ -134,8 +140,9 @@ impl Memory {
     }
 
     pub fn write_byte(&mut self, pos: u16, byte: u8) {
+        event!(Level::TRACE, "memory write byte {:#04X} at {:#06X}", byte, pos);
         match pos {
-            0x0000..=0x7FFF => (),//print!("write rom, not implemented |"),
+            0x0000..=0x7FFF => (), //print!("write rom, not implemented |"),
             0x8000..=0x9FFF => self.write_byte_to_vram(pos - VRAM_START, byte),
             0xA000..=0xBFFF => self.write_byte_to_storage(pos, byte), // ??
             0xC000..=0xDFFF => self.write_byte_to_storage(pos, byte), // wram
@@ -144,7 +151,9 @@ impl Memory {
             0xFF00..=0xFF07 => self.write_io_register(pos, byte),
             0xFF0F => self.write_interrupt_flags(byte),
             0xFF10..=0xFF26 => self.write_io_register(pos, byte), // audio
-            0xFF40..=0xFF4F => self.write_io_register(pos, byte),
+            0xFF40..=0xFF55 => self.write_io_register(pos, byte),
+            0xFF68 => self.write_bcps_palette(byte),
+            0xFF69 => self.write_bcpd_palette(byte),
             0xFF7F..=0xFFFE => self.write_byte_to_storage(pos, byte), // high ram
             0xFFFF => self.interrupt_enable = InterruptFlags::from_bits(byte).unwrap(),
             _ => panic!(
@@ -179,6 +188,15 @@ impl Memory {
                 // joypad input
                 0x0
             }
+            0xFF01 => {
+                event!(Level::WARN, "SB read, not implemented");
+                0
+            } // serial transfer not implemented
+            0xFF02 => {
+                event!(Level::WARN, "SC read, not implemented");
+                0
+            } // serial control not implemented
+            0xFF04 => self.div,
             0xFF41 => self.video.read_lcd_status(),
             0xFF42 => self.video.scy,
             0xFF43 => self.video.scx,
@@ -197,12 +215,12 @@ impl Memory {
     fn write_io_register(&mut self, pos: u16, byte: u8) {
         match pos {
             0xFF00 => self.buttons = byte,
-            0xFF01 | 0xFF02 => println!("Serial transfer register set, not implemented"),
+            0xFF01 | 0xFF02 => event!(Level::WARN, "Serial transfer register set, not implemented"),
             0xFF04 => self.div = 0, // always resets when written
             0xFF05 => self.tima = byte,
             0xFF06 => self.tma = byte,
             0xFF07 => self.tac = TimerControl::from_bits(byte).unwrap(),
-            0xFF10..=0xFF26 => println!("Audio register set, not implemented"),
+            0xFF10..=0xFF26 => event!(Level::WARN, "Audio register set, not implemented"),
             0xFF40 => self.video.lcd_control = LcdControl::from_bits(byte).unwrap(),
             0xFF41 => self.video.lcd_status = LcdStatus::from_bits(byte).unwrap(),
             0xFF42 => self.video.scy = byte,
@@ -212,10 +230,20 @@ impl Memory {
             0xFF49 => self.video.obj_1_palette = byte,
             0xFF4A => self.video.window_y = byte,
             0xFF4B => self.video.window_x = byte,
+            0xFF4F => self.video.bank_select = byte,
+            0xFF50 => event!(Level::WARN, "Disable boot rom, not implemented"),
             _ => {
                 unimplemented!("IO register not implemented for {:#08X}", pos)
             }
         }
+    }
+
+    fn write_bcps_palette(&mut self, byte: u8) {
+        self.bcps = byte;
+    }
+
+    fn write_bcpd_palette(&mut self, byte: u8) {
+        self.bcpd = byte;
     }
 
     pub fn step(&mut self) {
@@ -244,6 +272,7 @@ pub struct Video {
     obj_1_palette: u8,
     window_y: u8,
     window_x: u8,
+    bank_select: u8,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -288,6 +317,7 @@ impl Video {
             obj_1_palette: 0,
             window_y: 0,
             window_x: 0,
+            bank_select: 0,
         }
     }
 
