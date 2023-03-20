@@ -1,9 +1,10 @@
 use std::fmt::{write, Display, Formatter};
 
 use crate::helpers;
+use crate::memory::Memory;
 
-pub fn decode(data: &[u8], pc: u16) -> (Instruction, u16) {
-    let opcode = data[pc as usize];
+pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
+    let opcode = memory.read_byte(pc);
 
     match opcode {
         0x00 => (Instruction::NOP, 1),
@@ -15,7 +16,7 @@ pub fn decode(data: &[u8], pc: u16) -> (Instruction, u16) {
                 0x31 => Operand::StackPointer,
                 _ => panic!("Should not happend"),
             };
-            let operand = u16::from_le_bytes([data[pc as usize + 1], data[pc as usize + 2]]);
+            let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
             (
                 Instruction::LD(Load {
                     source: Operand::ImmediateOperand(ImmediateOperand::D16(operand)),
@@ -66,7 +67,7 @@ pub fn decode(data: &[u8], pc: u16) -> (Instruction, u16) {
         }
         0x06 | 0x16 | 0x26 | 0x36 | 0x0E | 0x1E | 0x2E | 0x3E => {
             let target = int_to_register((opcode + 1) >> 3).unwrap();
-            let operand = data[pc as usize + 1];
+            let operand = memory.read_byte(pc + 1);
             (
                 Instruction::LD(Load {
                     source: Operand::ImmediateOperand(ImmediateOperand::D8(operand)),
@@ -121,11 +122,11 @@ pub fn decode(data: &[u8], pc: u16) -> (Instruction, u16) {
             (Instruction::DEC(target), 1)
         }
         0x18 => {
-            let operand = helpers::u8_to_i8(data[pc as usize + 1]);
+            let operand = helpers::u8_to_i8(memory.read_byte(pc + 1));
             (Instruction::JR(ImmediateOperand::S8(operand), None), 2)
         }
         0x20 => {
-            let operand = helpers::u8_to_i8(data[pc as usize + 1]);
+            let operand = helpers::u8_to_i8(memory.read_byte(pc + 1));
             (
                 Instruction::JR(ImmediateOperand::S8(operand), Some(Condition::NZ)),
                 2,
@@ -133,21 +134,22 @@ pub fn decode(data: &[u8], pc: u16) -> (Instruction, u16) {
         }
         0x27 => (Instruction::DAA, 1),
         0x28 => {
-            let operand = helpers::u8_to_i8(data[pc as usize + 1]);
+            let operand = helpers::u8_to_i8(memory.read_byte(pc + 1));
             (
                 Instruction::JR(ImmediateOperand::S8(operand), Some(Condition::Z)),
                 2,
             )
         }
         0x30 => {
-            let operand = helpers::u8_to_i8(data[pc as usize + 1]);
+            let operand = helpers::u8_to_i8(memory.read_byte(pc + 1));
             (
                 Instruction::JR(ImmediateOperand::S8(operand), Some(Condition::NC)),
                 2,
             )
         }
+        0x37 => (Instruction::SCF, 1),
         0x38 => {
-            let operand = helpers::u8_to_i8(data[pc as usize + 1]);
+            let operand = helpers::u8_to_i8(memory.read_byte(pc + 1));
             (
                 Instruction::JR(ImmediateOperand::S8(operand), Some(Condition::C)),
                 2,
@@ -159,14 +161,14 @@ pub fn decode(data: &[u8], pc: u16) -> (Instruction, u16) {
             let target = int_to_register(((opcode - 0x40) & 0xf8) >> 3)
                 .expect(&format!("Unknown opcode {:#04X}", opcode));
 
-            let source =
-                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+            let source = int_to_register(opcode & 0x07)
+                .unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
 
             (Instruction::LD(Load { target, source }), 1)
         }
         0x80..=0x87 => {
-            let source =
-                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+            let source = int_to_register(opcode & 0x07)
+                .unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
 
             (
                 Instruction::ADD(Add {
@@ -176,9 +178,9 @@ pub fn decode(data: &[u8], pc: u16) -> (Instruction, u16) {
                 1,
             )
         }
-        0x88 ..= 0x8F => {
-            let source =
-                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+        0x88..=0x8F => {
+            let source = int_to_register(opcode & 0x07)
+                .unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
 
             (
                 Instruction::ADC(Adc {
@@ -189,31 +191,37 @@ pub fn decode(data: &[u8], pc: u16) -> (Instruction, u16) {
             )
         }
         0x90..=0x97 => {
-            let source =
-                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+            let source = int_to_register(opcode & 0x07)
+                .unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
 
             (Instruction::SUB(source), 1)
         }
+        0x98..=0x9F => {
+            let source = int_to_register(opcode & 0x07)
+                .unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
+
+            (Instruction::SBC(source), 1)
+        }
         0xA0..=0xA7 => {
-            let source =
-                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+            let source = int_to_register(opcode & 0x07)
+                .unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
 
             (Instruction::AND(source), 1)
         }
         0xA8..=0xAF => {
-            let source =
-                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+            let source = int_to_register(opcode & 0x07)
+                .unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
 
             (Instruction::XOR(source), 1)
         }
         0xB0..=0xB7 => {
-            let source =
-                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+            let source = int_to_register(opcode & 0x07)
+                .unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
             (Instruction::OR(source), 1)
         }
         0xB8..=0xBF => {
-            let source =
-                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+            let source = int_to_register(opcode & 0x07)
+                .unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
             (Instruction::CP(source), 1)
         }
         0xC0 => (Instruction::RET(Some(Condition::NZ)), 1),
@@ -228,9 +236,13 @@ pub fn decode(data: &[u8], pc: u16) -> (Instruction, u16) {
 
             (Instruction::POP(target), 1)
         }
+        0xC2 => {
+            let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
+            (Instruction::JP(ImmediateOperand::A16(operand), Some(Condition::NZ)), 3)
+        }
         0xC3 => {
-            let operand = u16::from_le_bytes([data[pc as usize + 1], data[pc as usize + 2]]);
-            (Instruction::JP(ImmediateOperand::A16(operand)), 3)
+            let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
+            (Instruction::JP(ImmediateOperand::A16(operand), None), 3)
         }
         0xC5 | 0xD5 | 0xE5 | 0xF5 => {
             let source = match opcode {
@@ -251,7 +263,7 @@ pub fn decode(data: &[u8], pc: u16) -> (Instruction, u16) {
         0xC9 => (Instruction::RET(None), 1),
 
         0xC4 => {
-            let operand = u16::from_le_bytes([data[pc as usize + 1], data[pc as usize + 2]]);
+            let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
             (
                 Instruction::Call(ImmediateOperand::A16(operand), Some(Condition::NZ)),
                 3,
@@ -259,24 +271,32 @@ pub fn decode(data: &[u8], pc: u16) -> (Instruction, u16) {
         }
         0xC6 => (
             Instruction::ADD(Add {
-                source: Operand::ImmediateOperand(ImmediateOperand::D8(data[pc as usize + 1])),
+                source: Operand::ImmediateOperand(ImmediateOperand::D8(memory.read_byte(pc + 1))),
                 target: Operand::Register(Register::A),
             }),
             2,
         ),
-        0xCB => {
-            let instruction = decode_cb(data[pc as usize + 1]);
+        0xCA => {
+            let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
+            (Instruction::JP(ImmediateOperand::A16(operand), Some(Condition::Z)), 3)
+        }
+            0xCB => {
+            let instruction = decode_cb(memory.read_byte(pc + 1));
             (Instruction::CB(instruction), 2)
         }
         0xCC => {
-            let operand = u16::from_le_bytes([data[pc as usize + 1], data[pc as usize + 2]]);
+            let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
             (
                 Instruction::Call(ImmediateOperand::A16(operand), Some(Condition::Z)),
                 3,
             )
         }
+        0xD2 => {
+            let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
+            (Instruction::JP(ImmediateOperand::A16(operand), Some(Condition::NC)), 3)
+        }
         0xD4 => {
-            let operand = u16::from_le_bytes([data[pc as usize + 1], data[pc as usize + 2]]);
+            let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
             (
                 Instruction::Call(ImmediateOperand::A16(operand), Some(Condition::NC)),
                 3,
@@ -284,51 +304,54 @@ pub fn decode(data: &[u8], pc: u16) -> (Instruction, u16) {
         }
         0xD6 => (
             Instruction::SUB(Operand::ImmediateOperand(ImmediateOperand::D8(
-                data[pc as usize + 1],
+                memory.read_byte(pc + 1),
             ))),
             2,
         ),
         0xDC => {
-            let operand = u16::from_le_bytes([data[pc as usize + 1], data[pc as usize + 2]]);
+            let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
             (
                 Instruction::Call(ImmediateOperand::A16(operand), Some(Condition::C)),
                 3,
             )
         }
+        0xDE => (
+            Instruction::SBC(Operand::ImmediateOperand(ImmediateOperand::D8(
+                memory.read_byte(pc + 1),
+            ))),
+            2,
+        ),
         0xCD => {
-            let operand = u16::from_le_bytes([data[pc as usize + 1], data[pc as usize + 2]]);
+            let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
             (Instruction::Call(ImmediateOperand::A16(operand), None), 3)
         }
         0xD0 => (Instruction::RET(Some(Condition::NC)), 1),
         0xD8 => (Instruction::RET(Some(Condition::C)), 1),
-        0xE0 => {
-            let operand = data[pc as usize + 1];
-            (
-                Instruction::LD(Load {
-                    target: Operand::MemoryLocation(MemoryLocation::ImmediateOperand(
-                        ImmediateOperand::A8(operand),
-                    )),
-                    source: Operand::Register(Register::A),
-                }),
-                2,
-            )
-        }
+        0xD9 => (Instruction::RETI, 1),
+        0xE0 => (
+            Instruction::LD(Load {
+                target: Operand::MemoryLocation(MemoryLocation::ImmediateOperand(
+                    ImmediateOperand::A8(memory.read_byte(pc + 1)),
+                )),
+                source: Operand::Register(Register::A),
+            }),
+            2,
+        ),
         0xE2 => (
             Instruction::LD(Load {
                 target: Operand::MemoryLocation(MemoryLocation::Register(Register::C)),
                 source: Operand::Register(Register::A),
             }),
+            1,
+        ),
+        0xE6 => (
+            Instruction::AND(Operand::ImmediateOperand(ImmediateOperand::D8(
+                memory.read_byte(pc + 1),
+            ))),
             2,
         ),
-        0xE6 => {
-            let operand = data[pc as usize + 1];
-            (
-                Instruction::AND(Operand::ImmediateOperand(ImmediateOperand::D8(operand))),
-                2,
-            )
-        }
         0xEA => {
-            let operand = u16::from_le_bytes([data[pc as usize + 1], data[pc as usize + 2]]);
+            let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
             (
                 Instruction::LD(Load {
                     target: Operand::MemoryLocation(MemoryLocation::ImmediateOperand(
@@ -340,7 +363,7 @@ pub fn decode(data: &[u8], pc: u16) -> (Instruction, u16) {
             )
         }
         0xF0 => {
-            let operand = data[pc as usize + 1];
+            let operand = memory.read_byte(pc + 1);
             (
                 Instruction::LD(Load {
                     target: Operand::Register(Register::A),
@@ -356,11 +379,11 @@ pub fn decode(data: &[u8], pc: u16) -> (Instruction, u16) {
                 target: Operand::Register(Register::A),
                 source: Operand::MemoryLocation(MemoryLocation::Register(Register::C)),
             }),
-            2,
+            1,
         ),
         0xF3 => (Instruction::DI, 1),
         0xFA => {
-            let operand = u16::from_le_bytes([data[pc as usize + 1], data[pc as usize + 2]]);
+            let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
             (
                 Instruction::LD(Load {
                     target: Operand::Register(Register::A),
@@ -373,7 +396,7 @@ pub fn decode(data: &[u8], pc: u16) -> (Instruction, u16) {
         }
         0xFB => (Instruction::EI, 1),
         0xFE => {
-            let operand = data[pc as usize + 1];
+            let operand = memory.read_byte(pc + 1);
             (
                 Instruction::CP(Operand::ImmediateOperand(ImmediateOperand::D8(operand))),
                 2,
@@ -390,6 +413,15 @@ fn decode_cb(opcode: u8) -> InstructionCB {
                 int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
 
             InstructionCB::SWAP(source)
+        }
+        0x40..=0x7F => {
+            // BIT
+            // divide by 8 and take remainder of mod 8
+            let bit = (opcode >> 3) & 0x7;
+            let target =
+                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+
+            InstructionCB::BIT(bit, target)
         }
         _ => panic!("Unknown CB opcode 0xCB{:X}", opcode),
     }
@@ -417,21 +449,24 @@ pub enum Instruction {
     HALT,
     CPL,
     DAA,
+    SCF,
     INC(Operand),
     DEC(Operand),
     ADD(Add),
     ADC(Adc),
     SUB(Operand),
+    SBC(Operand),
     LD(Load),
     XOR(Operand),
     OR(Operand),
     AND(Operand),
-    JP(ImmediateOperand),
+    JP(ImmediateOperand, Option<Condition>),
     JR(ImmediateOperand, Option<Condition>),
     DI,
     CP(Operand),
     Call(ImmediateOperand, Option<Condition>),
     RET(Option<Condition>),
+    RETI,
     EI,
     CB(InstructionCB),
     PUSH(RegisterPair),
@@ -446,19 +481,27 @@ impl Display for Instruction {
             Instruction::NOP => write!(f, "NOP"),
             Instruction::HALT => write!(f, "HALT"),
             Instruction::DAA => write!(f, "DAA"),
+            Instruction::SCF => write!(f, "SCF"),
             Instruction::DEC(operand) => write!(f, "DEC {}", operand),
             Instruction::INC(operand) => write!(f, "INC {}", operand),
             Instruction::ADD(add) => write!(f, "ADD {}", add),
             Instruction::ADC(add) => write!(f, "ADC {}", add),
             Instruction::SUB(operand) => write!(f, "SUB {}", operand),
+            Instruction::SBC(operand) => write!(f, "SBC {}", operand),
             Instruction::LD(load) => write!(f, "LD {}", load),
             Instruction::XOR(source) => write!(f, "XOR {}", source),
             Instruction::OR(source) => write!(f, "OR {}", source),
             Instruction::AND(source) => write!(f, "AND {}", source),
-            Instruction::JP(operand) => write!(f, "JP {}", operand),
+            Instruction::JP(operand, condition) => {
+                if let Some(condition) = condition {
+                    write!(f, "JP {}, {}", condition, operand)
+                } else {
+                    write!(f, "JP {}", operand)
+                }
+            },
             Instruction::JR(operand, condition) => {
                 if let Some(condition) = condition {
-                    write!(f, "JR {} {}", condition, operand)
+                    write!(f, "JR {}, {}", condition, operand)
                 } else {
                     write!(f, "JR {}", operand)
                 }
@@ -467,7 +510,7 @@ impl Display for Instruction {
             Instruction::CP(operand) => write!(f, "CP {}", operand),
             Instruction::Call(operand, condition) => {
                 if let Some(condition) = condition {
-                    write!(f, "CALL {} {}", condition, operand)
+                    write!(f, "CALL {}, {}", condition, operand)
                 } else {
                     write!(f, "CALL {}", operand)
                 }
@@ -479,6 +522,7 @@ impl Display for Instruction {
                     write!(f, "RET")
                 }
             }
+            Instruction::RETI => write!(f, "RETI"),
             Instruction::EI => write!(f, "EI"),
             Instruction::CPL => write!(f, "CPL"),
             Instruction::RLCA => write!(f, "RLCA"),
@@ -493,12 +537,14 @@ impl Display for Instruction {
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum InstructionCB {
     SWAP(Operand),
+    BIT(u8, Operand),
 }
 
 impl Display for InstructionCB {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             InstructionCB::SWAP(operand) => write!(f, "SWAP {}", operand),
+            InstructionCB::BIT(bit, operand) => write!(f, "BIT {}, {}", bit, operand),
         }
     }
 }

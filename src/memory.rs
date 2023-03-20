@@ -1,4 +1,4 @@
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Write};
 
 use bitflags::bitflags;
 use byteorder::{ReadBytesExt, WriteBytesExt};
@@ -75,7 +75,7 @@ impl Memory {
             }
             0x4000..=0x7FFF => {
                 // Switchable memory bank 01..max, todo
-                self.read_byte_from_storage(pos)
+                self.read_byte_from_rom(pos)
             }
             VRAM_START..=0x9FFF => self.read_byte_from_vram(pos - VRAM_START),
             0xA000..=0xBFFF => self.read_byte_from_storage(pos),
@@ -140,7 +140,12 @@ impl Memory {
     }
 
     pub fn write_byte(&mut self, pos: u16, byte: u8) {
-        event!(Level::TRACE, "memory write byte {:#04X} at {:#06X}", byte, pos);
+        event!(
+            Level::TRACE,
+            "memory write byte {:#04X} at {:#06X}",
+            byte,
+            pos
+        );
         match pos {
             0x0000..=0x7FFF => (), //print!("write rom, not implemented |"),
             0x8000..=0x9FFF => self.write_byte_to_vram(pos - VRAM_START, byte),
@@ -186,7 +191,7 @@ impl Memory {
         match pos {
             0xFF00 => {
                 // joypad input
-                0x0
+                self.buttons
             }
             0xFF01 => {
                 event!(Level::WARN, "SB read, not implemented");
@@ -225,6 +230,7 @@ impl Memory {
             0xFF41 => self.video.lcd_status = LcdStatus::from_bits(byte).unwrap(),
             0xFF42 => self.video.scy = byte,
             0xFF43 => self.video.scx = byte,
+            0xFF46 => self.oam_transfer(byte),
             0xFF47 => self.video.bg_palette = byte,
             0xFF48 => self.video.obj_0_palette = byte,
             0xFF49 => self.video.obj_1_palette = byte,
@@ -244,6 +250,19 @@ impl Memory {
 
     fn write_bcpd_palette(&mut self, byte: u8) {
         self.bcpd = byte;
+    }
+
+    fn oam_transfer(&mut self, byte: u8) {
+        let source_start = (byte as u16) << 8;
+        let mut buf = [0_u8; 0x9f];
+
+        self.storage.set_position(source_start as u64);
+        self.storage.read_exact(&mut buf).unwrap();
+
+        self.storage.set_position(0xfe00_u64);
+        self.storage.write_all(&buf).unwrap();
+
+        // todo: implement 160 machine cycles
     }
 
     pub fn step(&mut self) {

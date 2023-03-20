@@ -3,12 +3,16 @@ use std::ops::Sub;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
+use bitvec::macros::internal::funty::Fundamental;
 use tracing::callsite::register;
 use tracing::{event, Level};
 
 use crate::cartridge::Cartridge;
 use crate::helpers::signed_add;
-use crate::instructions::{decode, Add, Condition, ImmediateOperand, Instruction, InstructionCB, Load, MemoryLocation, Operand, Register, RegisterPair, Adc};
+use crate::instructions::{
+    decode, Adc, Add, Condition, ImmediateOperand, Instruction, InstructionCB, Load,
+    MemoryLocation, Operand, Register, RegisterPair,
+};
 use crate::memory::{InterruptFlags, Memory, VideoMode};
 use crate::ScreenBuffer;
 
@@ -107,19 +111,19 @@ impl Cpu {
             }
 
             // Catch PC out of bounds
-            if self.pc as usize >= self.cartridge.data.len() {
+            if self.pc as usize > 0xFFFF {
                 panic!("PC out of bounds");
                 self.debug_registers();
                 self.debug_stack();
             }
 
-            let (instruction, length) = decode(&self.cartridge.data, self.pc);
+            let (instruction, length) = decode(&mut self.memory, self.pc);
 
             event!(
                 Level::TRACE,
                 "{:#08X} | {:#04X} | {}",
                 self.pc,
-                self.cartridge.data[self.pc as usize],
+                self.memory.read_byte(self.pc),
                 instruction
             );
 
@@ -186,7 +190,8 @@ impl Cpu {
             Instruction::ADD(add) => self.add(add),
             Instruction::ADC(adc) => self.adc(adc),
             Instruction::SUB(operand) => self.sub(operand),
-            Instruction::JP(operand) => self.jump(operand),
+            Instruction::SBC(operand) => self.sbc(operand),
+            Instruction::JP(operand, condition) => self.jump(operand, condition),
             Instruction::XOR(source) => self.xor_a(source),
             Instruction::OR(source) => self.or_a(source),
             Instruction::AND(operand) => self.and(operand),
@@ -198,6 +203,7 @@ impl Cpu {
             Instruction::CP(operand) => self.compare_a(operand),
             Instruction::Call(operand, condition) => self.call(operand, condition),
             Instruction::RET(condition) => self.ret(condition),
+            Instruction::RETI => self.reti(),
             Instruction::EI => {
                 self.interrupts_enabled = true;
                 1
@@ -213,6 +219,7 @@ impl Cpu {
             Instruction::POP(target) => self.pop(target),
             Instruction::RLCA => self.rlca(),
             Instruction::DAA => self.daa(),
+            Instruction::SCF => self.scf(),
             // 0x00 => {
             //     self.pc += 1;
             //     0
@@ -1458,6 +1465,7 @@ impl Cpu {
     fn handle_cb(&mut self, instruction: InstructionCB) -> usize {
         match instruction {
             InstructionCB::SWAP(source) => self.swap(source),
+            InstructionCB::BIT(bit, target) => self.bit(bit, target),
         }
     }
 
@@ -1531,6 +1539,15 @@ impl Cpu {
         cycles
     }
 
+    fn reti(&mut self) -> usize {
+        let address = self.pop_word();
+        self.pc = address;
+
+        self.interrupts_enabled = true;
+
+        4
+    }
+
     fn daa(&mut self) -> usize {
         if !self.flags.n {
             if self.flags.c || self.a > 0x99 {
@@ -1551,6 +1568,14 @@ impl Cpu {
 
         self.flags.z = self.a == 0;
         self.flags.h = false;
+
+        1
+    }
+
+    fn scf(&mut self) -> usize {
+        self.flags.h = false;
+        self.flags.n = false;
+        self.flags.c = true;
 
         1
     }
@@ -1589,6 +1614,32 @@ impl Cpu {
         self.flags.n = false;
         self.flags.h = false;
         self.flags.c = false;
+
+        cycles
+    }
+
+    fn bit(&mut self, bit: u8, target: Operand) -> usize {
+        let mut cycles = 2;
+
+        match target {
+            Operand::Register(target) => {
+                self.flags.z = (self.get_register(target) >> bit) & 0x1 == 0x0;
+            }
+
+            Operand::MemoryLocation(location) => match location {
+                MemoryLocation::RegisterPair(pair) => {
+                    let memory_pos = self.get_register_pair(pair);
+                    let data = self.memory.read_byte(memory_pos);
+                    self.flags.z = (data >> bit) & 0x1 == 0x0;
+                    cycles = 3;
+                }
+                _ => panic!("should not happen"),
+            },
+            _ => panic!("should not happen"),
+        }
+
+        self.flags.n = false;
+        self.flags.h = true;
 
         cycles
     }
@@ -1809,7 +1860,20 @@ impl Cpu {
                 self.set_register_pair(pair, word);
                 cycles = 2;
             }
-            Operand::MemoryLocation(_) => panic!("not implemented"),
+            Operand::MemoryLocation(location) => match location {
+                MemoryLocation::RegisterPair(pair) => {
+                    let pos = self.get_register_pair(pair);
+                    let byte = self.memory.read_byte(pos).wrapping_add(1);
+                    self.memory.write_byte(pos, byte);
+
+                    self.flags.z = byte == 0;
+                    self.flags.n = false;
+                    self.flags.h = (byte & 0xF) == 0xF;
+
+                    cycles = 3;
+                }
+                _ => panic!("not implemented"),
+            },
             Operand::ImmediateOperand(_) => panic!("not implemented"),
             Operand::StackPointer => {
                 self.sp = self.sp.wrapping_add(1);
@@ -1945,15 +2009,49 @@ impl Cpu {
             _ => panic!("not implemented"),
         };
 
-        let carry: u16 = u16::from(self.flags.c);
-        let res = (self.a as u16) - (byte as u16 + carry);
+        let res = self.a.wrapping_sub(byte);
 
         self.flags.z = res == 0x0;
-        self.flags.h = ((self.a & 0x0F) - (byte & 0x0F) - (carry as u8)) > 0xf;
-        self.flags.c = res > 0xff;
-        self.a = (res & 0xff) as u8;
-
         self.flags.n = true;
+
+        self.flags.c = self.a < byte;
+        self.flags.h = (self.a & 0x0F) < (byte & 0x0F);
+        self.a = res;
+
+        cycles
+    }
+
+    fn sbc(&mut self, operand: Operand) -> usize {
+        let mut cycles = 1;
+        let byte = match operand {
+            Operand::Register(register) => self.get_register(register),
+            Operand::MemoryLocation(memory_location) => match memory_location {
+                MemoryLocation::RegisterPair(pair) => {
+                    cycles = 2;
+                    let location = self.get_register_pair(pair);
+                    self.memory.read_byte(location)
+                }
+                _ => panic!("should not happen"),
+            },
+            Operand::ImmediateOperand(operand) => match operand {
+                ImmediateOperand::D8(byte) => {
+                    cycles = 2;
+                    byte
+                }
+                _ => panic!("should not happen"),
+            },
+            _ => panic!("not implemented"),
+        };
+
+        let carry = self.flags.c.as_u8();
+        let res= self.a.wrapping_sub(byte + carry);
+
+        self.flags.z = res == 0x0;
+        self.flags.n = true;
+
+        self.flags.c = (self.a as u16) < (byte as u16 + carry as u16);
+        self.flags.h = (self.a & 0x0F) < ((byte & 0x0F) + carry);
+        self.a = res;
 
         cycles
     }
@@ -2065,7 +2163,8 @@ impl Cpu {
                     let source_data = self.get_register(source_register);
                     let result = current_register as u16 + source_data as u16 + self.flags.c as u16;
                     self.flags.h =
-                        ((current_register & 0x0F) + (source_data & 0x0F) + self.flags.c as u8) & 0x10
+                        ((current_register & 0x0F) + (source_data & 0x0F) + self.flags.c as u8)
+                            & 0x10
                             == 0x10;
                     self.set_register(target_register, (result & 0xFF) as u8);
                     result
@@ -2171,11 +2270,38 @@ impl Cpu {
         1
     }
 
-    fn jump(&mut self, operand: ImmediateOperand) -> usize {
-        match operand {
-            ImmediateOperand::A16(a16) => self.pc = a16,
-            _ => panic!("Unknown operand type for JP instruction"),
+    fn jump(&mut self, operand: ImmediateOperand, condition: Option<Condition>) -> usize {
+        let  ImmediateOperand::A16(operand) =  operand  else {
+            panic!("Unknown operand type for JP instruction")
+        };
+
+        if let Some(condition) = condition {
+            match condition {
+                Condition::Z => {
+                    if !(self.flags.z) {
+                        return 3;
+                    }
+                }
+                Condition::C => {
+                    if !(self.flags.c) {
+                        return 3;
+                    }
+                }
+                Condition::NZ => {
+                    if self.flags.z {
+                        return 3;
+                    }
+                }
+                Condition::NC => {
+                    if self.flags.c {
+                        return 3;
+                    }
+                }
+            }
         }
+
+        self.pc = operand;
+
         4
     }
 
@@ -2187,37 +2313,29 @@ impl Cpu {
         if let Some(condition) = condition {
             match condition {
                 Condition::Z => {
-                    if self.flags.z {
-                        self.pc = self.pc.wrapping_add_signed(operand as i16)
-                    } else {
+                    if !(self.flags.z) {
                         return 2;
                     }
                 }
                 Condition::C => {
-                    if self.flags.c {
-                        self.pc = self.pc.wrapping_add_signed(operand as i16)
-                    } else {
+                    if !(self.flags.c) {
                         return 2;
                     }
                 }
                 Condition::NZ => {
-                    if !self.flags.z {
-                        self.pc = self.pc.wrapping_add_signed(operand as i16)
-                    } else {
+                    if self.flags.z {
                         return 2;
                     }
                 }
                 Condition::NC => {
-                    if !self.flags.c {
-                        self.pc = self.pc.wrapping_add_signed(operand as i16)
-                    } else {
+                    if self.flags.c {
                         return 2;
                     }
                 }
             }
-        } else {
-            self.pc = self.pc.wrapping_add_signed(operand as i16);
         }
+
+        self.pc = self.pc.wrapping_add_signed(operand as i16);
 
         3
     }
@@ -2279,6 +2397,7 @@ impl Cpu {
         self.debug_registers();
         self.debug_flags();
         self.debug_video();
+        self.debug_stack();
     }
 
     fn swap_memory(&mut self, pos: u16) {
