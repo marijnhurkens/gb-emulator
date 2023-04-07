@@ -104,7 +104,7 @@ impl Memory {
     pub fn read_word(&mut self, pos: u16) -> u16 {
         let lo = self.read_byte(pos) as u16;
         let hi = self.read_byte(pos + 1) as u16;
-        hi << 8 | lo
+         lo | hi << 8
     }
 
     pub fn read_vram(&mut self) -> [u8; SCREEN_BUFFER_SIZE] {
@@ -151,6 +151,7 @@ impl Memory {
             0x8000..=0x9FFF => self.write_byte_to_vram(pos - VRAM_START, byte),
             0xA000..=0xBFFF => self.write_byte_to_storage(pos, byte), // ??
             0xC000..=0xDFFF => self.write_byte_to_storage(pos, byte), // wram
+            0xE000..=0xFDFF => self.write_byte_to_storage(pos - 0x2000, byte), //echo ram
             0xFE00..=0xFE9F => self.write_byte_to_storage(pos, byte), // sprite attr table
             0xFEA0..=0xFEFF => self.write_byte_to_storage(pos, byte), // not usable
             0xFF00..=0xFF07 => self.write_io_register(pos, byte),

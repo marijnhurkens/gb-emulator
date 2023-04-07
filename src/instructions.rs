@@ -238,11 +238,11 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
         }
         0xC2 => {
             let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
-            (Instruction::JP(ImmediateOperand::A16(operand), Some(Condition::NZ)), 3)
+            (Instruction::JP(Operand::ImmediateOperand(ImmediateOperand::A16(operand)), Some(Condition::NZ)), 3)
         }
         0xC3 => {
             let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
-            (Instruction::JP(ImmediateOperand::A16(operand), None), 3)
+            (Instruction::JP(Operand::ImmediateOperand(ImmediateOperand::A16(operand)), None), 3)
         }
         0xC5 | 0xD5 | 0xE5 | 0xF5 => {
             let source = match opcode {
@@ -256,7 +256,7 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
             (Instruction::PUSH(source), 1)
         }
         0xC7 | 0xCF | 0xD7 | 0xDF | 0xE7 | 0xEF | 0xF7 | 0xFF => {
-            let number = ((opcode >> 4) - 0xC) + ((opcode & 0b0001111) - 14);
+            let number = (opcode - 0xc7) >> 3;
             (Instruction::RST(number), 1)
         }
         0xC8 => (Instruction::RET(Some(Condition::Z)), 1),
@@ -278,7 +278,7 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
         ),
         0xCA => {
             let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
-            (Instruction::JP(ImmediateOperand::A16(operand), Some(Condition::Z)), 3)
+            (Instruction::JP(Operand::ImmediateOperand(ImmediateOperand::A16(operand)), Some(Condition::Z)), 3)
         }
             0xCB => {
             let instruction = decode_cb(memory.read_byte(pc + 1));
@@ -293,7 +293,7 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
         }
         0xD2 => {
             let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
-            (Instruction::JP(ImmediateOperand::A16(operand), Some(Condition::NC)), 3)
+            (Instruction::JP(Operand::ImmediateOperand(ImmediateOperand::A16(operand)), Some(Condition::NC)), 3)
         }
         0xD4 => {
             let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
@@ -349,6 +349,10 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
                 memory.read_byte(pc + 1),
             ))),
             2,
+        ),
+        0xE9 => (
+            Instruction::JP(Operand::RegisterPair(RegisterPair(Register::H, Register::L)), None),
+            1,
         ),
         0xEA => {
             let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
@@ -460,7 +464,7 @@ pub enum Instruction {
     XOR(Operand),
     OR(Operand),
     AND(Operand),
-    JP(ImmediateOperand, Option<Condition>),
+    JP(Operand, Option<Condition>),
     JR(ImmediateOperand, Option<Condition>),
     DI,
     CP(Operand),

@@ -2044,7 +2044,7 @@ impl Cpu {
         };
 
         let carry = self.flags.c.as_u8();
-        let res= self.a.wrapping_sub(byte + carry);
+        let res = self.a.wrapping_sub(byte + carry);
 
         self.flags.z = res == 0x0;
         self.flags.n = true;
@@ -2270,9 +2270,16 @@ impl Cpu {
         1
     }
 
-    fn jump(&mut self, operand: ImmediateOperand, condition: Option<Condition>) -> usize {
-        let  ImmediateOperand::A16(operand) =  operand  else {
-            panic!("Unknown operand type for JP instruction")
+    fn jump(&mut self, operand: Operand, condition: Option<Condition>) -> usize {
+        let mut cycles = 4;
+
+        let operand = match operand {
+            Operand::RegisterPair(pair) => {
+                cycles = 1;
+                self.get_register_pair(pair)
+            },
+            Operand::ImmediateOperand(ImmediateOperand::A16(operand)) => operand,
+            _ => panic!("should not happend"),
         };
 
         if let Some(condition) = condition {
@@ -2302,7 +2309,7 @@ impl Cpu {
 
         self.pc = operand;
 
-        4
+        cycles
     }
 
     fn jump_relative(&mut self, operand: ImmediateOperand, condition: Option<Condition>) -> usize {
@@ -2432,7 +2439,7 @@ impl Cpu {
     }
 
     fn get_register_pair(&self, reg_pair: RegisterPair) -> u16 {
-        u16::from_le_bytes([self.get_register(reg_pair.0), self.get_register(reg_pair.1)])
+        ((self.get_register(reg_pair.0) as u16) << 8) | (self.get_register(reg_pair.1) as u16)
     }
 
     fn set_register(&mut self, reg: Register, data: u8) {
@@ -2449,10 +2456,8 @@ impl Cpu {
     }
 
     fn set_register_pair(&mut self, reg_pair: RegisterPair, data: u16) {
-        let data = u16::to_le_bytes(data);
-
-        self.set_register(reg_pair.0, data[0]);
-        self.set_register(reg_pair.1, data[1]);
+        self.set_register(reg_pair.0, (data >> 8) as u8);
+        self.set_register(reg_pair.1, (data & 0x00FF) as u8);
     }
 }
 
