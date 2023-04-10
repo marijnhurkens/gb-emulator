@@ -6,7 +6,7 @@ pub struct Cartridge {
     pub data: Vec<u8>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct CartridgeHeader {
     pub title: String,
     pub cgb_flag: u8,

@@ -101,12 +101,6 @@ impl Memory {
         res
     }
 
-    pub fn read_word(&mut self, pos: u16) -> u16 {
-        let lo = self.read_byte(pos) as u16;
-        let hi = self.read_byte(pos + 1) as u16;
-         lo | hi << 8
-    }
-
     pub fn read_vram(&mut self) -> [u8; SCREEN_BUFFER_SIZE] {
         self.video.vram.set_position(0);
         let mut buffer = [0; SCREEN_BUFFER_SIZE];
@@ -141,7 +135,7 @@ impl Memory {
 
     pub fn write_byte(&mut self, pos: u16, byte: u8) {
         event!(
-            Level::TRACE,
+            Level::DEBUG,
             "memory write byte {:#04X} at {:#06X}",
             byte,
             pos
@@ -178,6 +172,12 @@ impl Memory {
         //print!("write byte {:#08X} -> {:#04X} | ", pos, byte);
         self.storage.set_position(pos as u64);
         self.storage.write_u8(byte).unwrap()
+    }
+
+    pub fn read_word(&mut self, pos: u16) -> u16 {
+        let lo = self.read_byte(pos) as u16;
+        let hi = self.read_byte(pos + 1) as u16;
+        lo | (hi << 8)
     }
 
     pub fn write_word(&mut self, pos: u16, word: u16) {

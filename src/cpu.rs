@@ -4,11 +4,9 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use bitvec::macros::internal::funty::Fundamental;
-use tracing::callsite::register;
 use tracing::{event, Level};
 
 use crate::cartridge::Cartridge;
-use crate::helpers::signed_add;
 use crate::instructions::{
     decode, Adc, Add, Condition, ImmediateOperand, Instruction, InstructionCB, Load,
     MemoryLocation, Operand, Register, RegisterPair,
@@ -52,14 +50,14 @@ pub struct CpuFlags {
 
 impl CpuFlags {
     pub fn to_bits(&self) -> u8 {
-        self.c as u8 | (self.h as u8) << 1 | (self.n as u8) << 2 | (self.z as u8) << 3
+        (self.c as u8) << 4 | (self.h as u8) << 5 | (self.n as u8) << 6 | (self.z as u8) << 7
     }
 
     pub fn set_bits(&mut self, bits: u8) {
-        self.c = bits & 0x1 == 0x1;
-        self.h = bits & 0x2 == 0x2;
-        self.n = bits & 0x4 == 0x4;
-        self.z = bits & 0x8 == 0x8;
+        self.c = bits & 0x10 == 0x10;
+        self.h = bits & 0x20 == 0x20;
+        self.n = bits & 0x40 == 0x40;
+        self.z = bits & 0x80 == 0x80;
     }
 }
 
@@ -75,17 +73,17 @@ impl Cpu {
             pc: 0x0100,
             sp: STACK_START,
             a: 0x01,
-            b: 0xff,
+            b: 0x00,
             c: 0x13,
             d: 0x00,
-            e: 0xc1,
-            h: 0x74,
-            l: 0x03,
+            e: 0xD8,
+            h: 0x01,
+            l: 0x4D,
             flags: CpuFlags {
-                z: false,
-                c: false,
+                z: true,
+                c: true,
                 n: false,
-                h: false,
+                h: true,
             },
             interrupts_enabled: false,
             memory: Memory::new(cartridge.data.clone()),
@@ -103,77 +101,82 @@ impl Cpu {
         self.state = CpuState::Running;
 
         loop {
-            // Draw to screen
-            if let Some(buffer) = &screen_buffer {
-                let mut guard = buffer.lock().unwrap();
-                (*guard) = self.memory.read_vram();
-                drop(guard);
-            }
+           self.cycle(&screen_buffer);
+        }
+    }
 
-            // Catch PC out of bounds
-            if self.pc as usize > 0xFFFF {
-                panic!("PC out of bounds");
-                self.debug_registers();
-                self.debug_stack();
-            }
+    pub fn cycle(&mut self, screen_buffer: &Option<ScreenBuffer>,)
+    {
+        // Draw to screen
+        if let Some(buffer) = &screen_buffer {
+            let mut guard = buffer.lock().unwrap();
+            (*guard) = self.memory.read_vram();
+            drop(guard);
+        }
 
-            let (instruction, length) = decode(&mut self.memory, self.pc);
+        // Catch PC out of bounds
+        if self.pc as usize > 0xFFFF {
+            panic!("PC out of bounds");
+        }
 
-            event!(
-                Level::TRACE,
+        let (instruction, length) = decode(&mut self.memory, self.pc);
+
+        self.log_doctor();
+
+        event!(
+                Level::DEBUG,
                 "{:#08X} | {:#04X} | {}",
                 self.pc,
                 self.memory.read_byte(self.pc),
                 instruction
             );
 
-            if let Some(break_point) = self.break_point {
-                if break_point == self.pc {
-                    self.state = CpuState::Stopped;
-                }
+        if let Some(break_point) = self.break_point {
+            if break_point == self.pc {
+                self.state = CpuState::Stopped;
             }
+        }
 
-            self.pc = self.pc.wrapping_add(length);
+        self.pc = self.pc.wrapping_add(length);
 
-            let start_time = Instant::now();
-            let t_cycles = self.process_instruction(instruction) * 4;
+        let start_time = Instant::now();
+        let t_cycles = self.process_instruction(instruction) * 4;
 
-            for _ in 0..t_cycles {
-                self.memory.step();
-                let new_mode = self.memory.video.step();
+        for _ in 0..t_cycles {
+            self.memory.step();
+            let new_mode = self.memory.video.step();
 
-                // we've entered vblank, set Interrupt Flag
-                if let Some(VideoMode::VBlank) = new_mode {
+            // we've entered vblank, set Interrupt Flag
+            if let Some(VideoMode::VBlank) = new_mode {
+                let interrupt_flag = self.memory.read_byte(0xFF0F);
+                self.memory.write_byte(0xFF0F, interrupt_flag | 0b0000_0001);
+
+                if self.interrupts_enabled
+                    && self
+                    .memory
+                    .interrupt_enable
+                    .intersects(InterruptFlags::VBLANK)
+                {
+                    self.interrupts_enabled = false;
                     let interrupt_flag = self.memory.read_byte(0xFF0F);
-                    self.memory.write_byte(0xFF0F, interrupt_flag | 0b0000_0001);
+                    self.memory.write_byte(0xFF0F, interrupt_flag & 0b1111_1110);
 
-                    if self.interrupts_enabled
-                        && self
-                            .memory
-                            .interrupt_enable
-                            .intersects(InterruptFlags::VBLANK)
-                    {
-                        self.interrupts_enabled = false;
-                        let interrupt_flag = self.memory.read_byte(0xFF0F);
-                        self.memory.write_byte(0xFF0F, interrupt_flag & 0b1111_1110);
-
-                        self.push_word(self.pc + 1);
-                        let address = 0x0040;
-                        event!(Level::INFO, "INT 40 VBLANK | {:#08X}", address);
-                        self.pc = address;
-                    }
+                    self.push_word(self.pc + 1);
+                    let address = 0x0040;
+                    event!(Level::INFO, "INT 40 VBLANK | {:#08X}", address);
+                    self.pc = address;
                 }
             }
+        }
 
-            // handle timing
-            let end_time = Instant::now();
-            let expected_time = Duration::from_secs_f64(t_cycles as f64 / CPU_FREQ);
-            let time_elapsed = end_time.duration_since(start_time);
+        // handle timing
+        let end_time = Instant::now();
+        let expected_time = Duration::from_secs_f64(t_cycles as f64 / CPU_FREQ);
+        let time_elapsed = end_time.duration_since(start_time);
 
-            if time_elapsed.lt(&expected_time) {
-                let sleep_for = expected_time.sub(time_elapsed);
-                sleep(sleep_for);
-            }
+        if time_elapsed.lt(&expected_time) {
+            let sleep_for = expected_time.sub(time_elapsed);
+            sleep(sleep_for);
         }
     }
 
@@ -1470,31 +1473,31 @@ impl Cpu {
     }
 
     fn call(&mut self, operand: ImmediateOperand, condition: Option<Condition>) -> usize {
-        self.push_word(self.pc);
-
         match condition {
             Some(Condition::Z) => {
-                if self.flags.z {
-                    return 3;
-                }
-            }
-            Some(Condition::C) => {
-                if self.flags.c {
-                    return 3;
-                }
-            }
-            Some(Condition::NZ) => {
                 if !self.flags.z {
                     return 3;
                 }
             }
-            Some(Condition::NC) => {
+            Some(Condition::C) => {
                 if !self.flags.c {
+                    return 3;
+                }
+            }
+            Some(Condition::NZ) => {
+                if self.flags.z {
+                    return 3;
+                }
+            }
+            Some(Condition::NC) => {
+                if self.flags.c {
                     return 3;
                 }
             }
             _ => (),
         };
+
+        self.push_word(self.pc);
 
         let address = match operand {
             ImmediateOperand::A16(operand) => operand,
@@ -1830,17 +1833,20 @@ impl Cpu {
     }
 
     fn push_word(&mut self, word: u16) {
-        self.sp -= 2;
+        self.sp -= 1;
+        self.memory.write_byte(self.sp, ((word & 0xFF00) >> 8) as u8);
 
-        self.memory.write_word(self.sp, word);
+        self.sp -= 1;
+        self.memory.write_byte(self.sp, (word & 0xFF) as u8);
     }
 
     fn pop_word(&mut self) -> u16 {
-        let data = self.memory.read_word(self.sp);
+        let data_low = self.memory.read_byte(self.sp) as u16;
+        self.sp += 1;
+        let data_high = self.memory.read_byte(self.sp) as u16;
+        self.sp += 1;
 
-        self.sp += 2;
-
-        data
+        data_low | (data_high << 8)
     }
 
     /** add 1 to byte, does not set carry flag */
@@ -1848,10 +1854,11 @@ impl Cpu {
         let mut cycles = 1;
         match operand {
             Operand::Register(register) => {
-                let byte = self.get_register(register).wrapping_add(1);
-                self.set_register(register, byte);
+                let byte = self.get_register(register);
+                let result = byte.wrapping_add(1);
+                self.set_register(register, result);
 
-                self.flags.z = byte == 0;
+                self.flags.z = result == 0;
                 self.flags.n = false;
                 self.flags.h = (byte & 0xF) == 0xF;
             }
@@ -1915,7 +1922,10 @@ impl Cpu {
     fn xor_a(&mut self, source: Operand) -> usize {
         let (source_data, cycles) = match source {
             Operand::Register(source) => (self.get_register(source), 1),
-            Operand::MemoryLocation(_) => panic!("not implemented"), // 2 cycles
+            Operand::MemoryLocation(location) => match location {
+                MemoryLocation::RegisterPair(pair) => (self.memory.read_byte(self.get_register_pair(pair)), 2),
+                _ =>panic!("Should not happen"),
+            }
             Operand::RegisterPair(_) => panic!("Should not happen"),
             Operand::ImmediateOperand(_) => panic!("not implemented"),
             Operand::StackPointer => panic!("not implemented"),
@@ -1924,7 +1934,7 @@ impl Cpu {
         self.a ^= source_data;
         self.flags.z = self.a == 0;
         self.flags.n = false;
-        self.flags.h = true;
+        self.flags.h = false;
         self.flags.c = false;
 
         cycles
@@ -1942,7 +1952,7 @@ impl Cpu {
         self.a |= source_data;
         self.flags.z = self.a == 0;
         self.flags.n = false;
-        self.flags.h = true;
+        self.flags.h = false;
         self.flags.c = false;
 
         cycles
@@ -2277,7 +2287,7 @@ impl Cpu {
             Operand::RegisterPair(pair) => {
                 cycles = 1;
                 self.get_register_pair(pair)
-            },
+            }
             Operand::ImmediateOperand(ImmediateOperand::A16(operand)) => operand,
             _ => panic!("should not happend"),
         };
@@ -2404,7 +2414,6 @@ impl Cpu {
         self.debug_registers();
         self.debug_flags();
         self.debug_video();
-        self.debug_stack();
     }
 
     fn swap_memory(&mut self, pos: u16) {
@@ -2459,30 +2468,72 @@ impl Cpu {
         self.set_register(reg_pair.0, (data >> 8) as u8);
         self.set_register(reg_pair.1, (data & 0x00FF) as u8);
     }
+
+    fn log_doctor(&mut self) {
+        // gameboy doctor
+        event!(
+            Level::TRACE,
+            "A:{:02X} F:{:02X} B:{:02X} C:{:02X} D:{:02X} E:{:02X} H:{:02X} L:{:02X} SP:{:04X} PC:{:04X} PCMEM:{:02X},{:02X},{:02X},{:02X}",
+            self.a,
+            self.flags.to_bits(),
+            self.b,
+            self.c,
+            self.d,
+            self.e,
+            self.h,
+            self.l,
+            self.sp,
+            self.pc,
+            self.memory.read_byte(self.pc),
+            self.memory.read_byte(self.pc+1),
+            self.memory.read_byte(self.pc+2),
+            self.memory.read_byte(self.pc+3),
+        );
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::cartridge::CartridgeHeader;
     use crate::{Cartridge, Cpu};
+    use crate::cpu::{CpuState, STACK_START};
 
     #[test]
-    fn it_handles_registers() {
+    fn it_executes_call() {
         let cartridge = Cartridge {
             header: CartridgeHeader {
                 title: "test".to_string(),
-                cgb_flag: 0,
-                cartridge_type: 0,
-                licensee_code: 0,
-                rom_size: 0,
-                ram_size: 0,
+                ..Default::default()
             },
-            data: vec![0x21, 0x01, 0x00],
+            data: vec![0xCD, 0x03, 0x00],
         };
 
         let mut cpu = Cpu::load_cartridge(cartridge);
+        cpu.state = CpuState::Running;
         cpu.pc = 0;
-        cpu.run(None, None);
-        dbg!(cpu);
+        cpu.cycle(&None);
+
+        assert_eq!(cpu.pc, 0x03);
+        assert_eq!(cpu.sp, STACK_START - 2);
+    }
+
+    #[test]
+    fn it_executes_ret() {
+        let cartridge = Cartridge {
+            header: CartridgeHeader {
+                title: "test".to_string(),
+                ..Default::default()
+            },
+            data: vec![0xCD, 0x04, 0x00, 0x00, 0xC9],
+        };
+
+        let mut cpu = Cpu::load_cartridge(cartridge);
+        cpu.state = CpuState::Running;
+        cpu.pc = 0;
+        cpu.cycle(&None);
+        cpu.cycle(&None);
+
+        assert_eq!(cpu.pc, 0x03);
+        assert_eq!(cpu.sp, STACK_START);
     }
 }

@@ -55,9 +55,24 @@ fn main() {
         .with_writer(stdout.with_max_level(args.log.unwrap_or(Level::ERROR)))
         .with_file(false)
         .with_line_number(false)
+        .without_time()
         .pretty();
 
-    let my_subscriber = Registry::default().with(stdout_log);
+
+    let file = File::create("cpu.log").unwrap();
+
+
+    let cpu_log = tracing_subscriber::fmt::layer()
+        .with_writer(file.with_max_level(Level::TRACE).with_min_level(Level::TRACE))
+        .with_line_number(false)
+        .without_time()
+        .with_ansi(false)
+        .with_level(false)
+        .with_file(false)
+        .with_target(false)
+        ;
+
+    let my_subscriber = Registry::default().with(stdout_log).with(cpu_log);
     tracing::subscriber::set_global_default(my_subscriber).expect("setting tracing default failed");
 
     // read rom file
