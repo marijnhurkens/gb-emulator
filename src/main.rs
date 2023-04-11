@@ -53,10 +53,11 @@ fn main() {
 
     let stdout_log = tracing_subscriber::fmt::layer()
         .with_writer(stdout.with_max_level(args.log.unwrap_or(Level::ERROR)))
-        .with_file(false)
         .with_line_number(false)
         .without_time()
-        .pretty();
+        .with_file(false)
+        .with_level(false)
+        .with_target(false);
 
 
     let file = File::create("cpu.log").unwrap();

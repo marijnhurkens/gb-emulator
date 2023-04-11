@@ -8,8 +8,8 @@ use tracing::{event, Level};
 
 use crate::cartridge::Cartridge;
 use crate::instructions::{
-    decode, Adc, Add, Condition, ImmediateOperand, Instruction, InstructionCB, Load,
-    MemoryLocation, Operand, Register, RegisterPair,
+    decode, Add, Condition, ImmediateOperand, Instruction, InstructionCB, Load, MemoryLocation,
+    Operand, Register, RegisterPair,
 };
 use crate::memory::{InterruptFlags, Memory, VideoMode};
 use crate::ScreenBuffer;
@@ -34,6 +34,8 @@ pub struct Cpu {
     cartridge: Cartridge,
     state: CpuState,
     break_point: Option<u16>,
+    current_opcode: Option<u8>,
+    current_instruction: Option<Instruction>,
 }
 
 #[derive(Debug)]
@@ -90,6 +92,8 @@ impl Cpu {
             cartridge,
             state: CpuState::Stopped,
             break_point: None,
+            current_opcode: None,
+            current_instruction: None,
         }
     }
 
@@ -101,12 +105,11 @@ impl Cpu {
         self.state = CpuState::Running;
 
         loop {
-           self.cycle(&screen_buffer);
+            self.cycle(&screen_buffer);
         }
     }
 
-    pub fn cycle(&mut self, screen_buffer: &Option<ScreenBuffer>,)
-    {
+    pub fn cycle(&mut self, screen_buffer: &Option<ScreenBuffer>) {
         // Draw to screen
         if let Some(buffer) = &screen_buffer {
             let mut guard = buffer.lock().unwrap();
@@ -119,17 +122,19 @@ impl Cpu {
             panic!("PC out of bounds");
         }
 
+        self.current_opcode = Some(self.memory.read_byte(self.pc));
         let (instruction, length) = decode(&mut self.memory, self.pc);
+        self.current_instruction = Some(instruction);
 
         self.log_doctor();
 
         event!(
-                Level::DEBUG,
-                "{:#08X} | {:#04X} | {}",
-                self.pc,
-                self.memory.read_byte(self.pc),
-                instruction
-            );
+            Level::DEBUG,
+            "{:#08X} | {:#04X} | {}",
+            self.pc,
+            self.memory.read_byte(self.pc),
+            instruction
+        );
 
         if let Some(break_point) = self.break_point {
             if break_point == self.pc {
@@ -153,9 +158,9 @@ impl Cpu {
 
                 if self.interrupts_enabled
                     && self
-                    .memory
-                    .interrupt_enable
-                    .intersects(InterruptFlags::VBLANK)
+                        .memory
+                        .interrupt_enable
+                        .intersects(InterruptFlags::VBLANK)
                 {
                     self.interrupts_enabled = false;
                     let interrupt_flag = self.memory.read_byte(0xFF0F);
@@ -191,7 +196,7 @@ impl Cpu {
             Instruction::DEC(operand) => self.decrement(operand),
             Instruction::LD(load) => self.ld(load),
             Instruction::ADD(add) => self.add(add),
-            Instruction::ADC(adc) => self.adc(adc),
+            Instruction::ADC(operand) => self.adc(operand),
             Instruction::SUB(operand) => self.sub(operand),
             Instruction::SBC(operand) => self.sbc(operand),
             Instruction::JP(operand, condition) => self.jump(operand, condition),
@@ -223,1116 +228,7 @@ impl Cpu {
             Instruction::RLCA => self.rlca(),
             Instruction::DAA => self.daa(),
             Instruction::SCF => self.scf(),
-            // 0x00 => {
-            //     self.pc += 1;
-            //     0
-            // }
-            // 0x01 => {
-            //     // load next 2 bytes in bc
-            //     let data: [u8; 2] = self.next_word();
-            //     self.bc = data;
-            //     self.pc += 1;
-            //     3
-            // }
-            // 0x02 => {
-            //     // write a to memory on location bc
-            //     self.memory.write_byte(u16::from_le_bytes(self.bc), self.a);
-            //     self.pc += 1;
-            //     2
-            // }
-            // 0x03 => {
-            //     // increment BE by 1
-            //     self.bc = (u16::from_le_bytes(self.bc) + 1).to_le_bytes();
-            //     self.pc += 1;
-            //     2
-            // }
-            // 0x04 => {
-            //     // increment B by 1
-            //     self.bc[0] = self.increment(self.bc[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x05 => {
-            //     // decrement B by 1
-            //     self.bc[0] = self.decrement(self.bc[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x06 => {
-            //     // load next byte to b
-            //     let data = self.next_byte();
-            //     self.bc[0] = data;
-            //     self.pc += 1;
-            //     2
-            // }
-            // 0x07 => {
-            //     self.rlca();
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x08 => {
-            //     // write stack pointer to memory at next word location
-            //     let pos = u16::from_le_bytes(self.next_word());
-            //     self.memory.write_word(pos, self.sp);
-            //     self.pc += 1;
-            //     5
-            // }
-            // 0x0A => {
-            //     // load memory at address BC into A
-            //     self.a = self.memory.read_byte(u16::from_le_bytes(self.bc));
-            //     self.pc += 1;
-            //     2
-            // }
-            // 0x0B => {
-            //     // decrement BC by 1
-            //     let data = u16::from_le_bytes(self.bc);
-            //     self.bc = (data - 1).to_le_bytes();
-            //     self.pc += 1;
-            //     2
-            // }
-            // 0x0C => {
-            //     // increment C by 1
-            //     self.bc[1] = self.increment(self.bc[1]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x0D => {
-            //     // decrement C by 1
-            //     self.bc[1] = self.decrement(self.bc[1]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x0E => {
-            //     // load next byte to c
-            //     let data = self.next_byte();
-            //     self.bc[1] = data;
-            //     self.pc += 1;
-            //     2
-            // }
-            // 0x11 => {
-            //     // load next word into DE
-            //     self.de = self.next_word();
-            //     self.pc += 1;
-            //     3
-            // }
-            // 0x12 => {
-            //     // store A to mememory location of DE
-            //     let address = u16::from_le_bytes(self.de);
-            //     self.memory.write_byte(address, self.a);
-            //     self.pc += 1;
-            //
-            //     2
-            // }
-            // 0x13 => {
-            //     // increment DE by 1
-            //     self.de = (u16::from_le_bytes(self.de) + 1).to_le_bytes();
-            //     self.pc += 1;
-            //     2
-            // }
-            // 0x14 => {
-            //     // increment D by 1
-            //     self.de[0] = self.increment(self.de[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x15 => {
-            //     // decrement D by 1
-            //     self.de[0] = self.decrement(self.de[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x16 => {
-            //     // load next byte to d
-            //     let data = self.next_byte();
-            //     print!("ld d, ${:#02X} | ", data);
-            //     self.de[0] = data;
-            //     self.pc += 1;
-            //     2
-            // }
-            // 0x18 => {
-            //     // relative jump
-            //     let pos = self.next_byte();
-            //     self.pc += pos as u16;
-            //     3
-            // }
-            // 0x19 => {
-            //     // add DE to HL
-            //     print!("add hl, de | ");
-            //     self.add_to_reg_hl(self.de);
-            //     self.pc += 1;
-            //     2
-            // }
-            // 0x1C => {
-            //     // increment E by 1
-            //     self.de[1] = self.increment(self.de[1]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x1D => {
-            //     // decrement E by 1
-            //     self.de[1] = self.decrement(self.de[1]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x1A => {
-            //     self.a = self.memory.read_byte(u16::from_le_bytes(self.de));
-            //     self.pc += 1;
-            //     2
-            // }
-            // // todo: set clock cycles from here on
-            // 0x1E => {
-            //     self.de[1] = self.next_byte();
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x1F => {
-            //     self.rra();
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x20 => {
-            //     // if z is 0, jump next byte relative steps, otherwise skip next byte
-            //     // self.debug_registers();
-            //     if !self.flags.z {
-            //         //let current_addr = self.pc; // store because next_byte increases pc
-            //         //let new_addr = current_addr + self.next_byte() as u16 + 2;
-            //         let data = self.next_byte();
-            //         self.relative_jump(data);
-            //         self.pc += 1;
-            //         print!("JR NZ, s8 | Jump to {:#04X}", self.pc);
-            //     } else {
-            //         print!("JR NZ, s8 | Skip");
-            //         self.pc += 2; // skip data
-            //     }
-            //     1
-            // }
-            // 0x21 => {
-            //     // load the next word (16 bits) into the HL register
-            //     let data: [u8; 2] = self.next_word();
-            //     print!("LD HL, d16 | {:#04X}", u16::from_le_bytes(data));
-            //     self.hl = data;
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x22 => {
-            //     // write value of A to memory location HL and increment HL
-            //     self.memory.write_byte(u16::from_le_bytes(self.hl), self.a);
-            //     self.hl = (u16::from_le_bytes(self.hl) + 1).to_le_bytes();
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x23 => {
-            //     // increment HL by 1
-            //     self.hl = (u16::from_le_bytes(self.hl) + 1).to_le_bytes();
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x24 => {
-            //     // increment H by 1
-            //     self.hl[0] = self.increment(self.hl[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x25 => {
-            //     // decrement H by 1
-            //     self.hl[0] = self.decrement(self.hl[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x26 => {
-            //     // Load next byte to H
-            //     let data = self.next_byte();
-            //     self.hl[0] = data;
-            //     self.pc += 1;
-            //     2
-            // }
-            // 0x27 => {
-            //     // // note: assumes a is a uint8_t and wraps from 0xff to 0
-            //     // if (!n_flag) {  // after an addition, adjust if (half-)carry occurred or if result is out of bounds
-            //     //   if (c_flag || a > 0x99) { a += 0x60; c_flag = 1; }
-            //     //   if (h_flag || (a & 0x0f) > 0x09) { a += 0x6; }
-            //     // } else {  // after a subtraction, only adjust if (half-)carry occurred
-            //     //   if (c_flag) { a -= 0x60; }
-            //     //   if (h_flag) { a -= 0x6; }
-            //     // }
-            //     // // these flags are always updated
-            //     // z_flag = (a == 0); // the usual z flag
-            //     // h_flag = 0; // h flag is always cleared
-            //
-            //     if !self.flags.n {
-            //         if self.flags.c || self.a > 0x99 {
-            //             self.a += 0x60;
-            //             self.flags.c = true;
-            //         }
-            //         if self.flags.h || (self.a & 0x0f) > 0x9 {
-            //             self.a += 0x6;
-            //         }
-            //     } else {
-            //         if self.flags.c {
-            //             self.a = self.a.overflowing_sub(0x60).0;
-            //         }
-            //         if self.flags.h {
-            //             self.a -= 0x6;
-            //         }
-            //     }
-            //
-            //     self.flags.z = self.a == 0;
-            //     self.flags.h = false;
-            //     self.pc += 1;
-            //
-            //     1
-            // }
-            // 0x28 => {
-            //     // if z is 1, jump next byte relative steps, otherwise skip next byte
-            //     if self.flags.z {
-            //         // let current_addr = self.pc; // store because next_byte increases pc
-            //         // let new_addr = current_addr + self.next_byte() as u16 + 2;
-            //         let data = self.next_byte();
-            //         self.relative_jump(data);
-            //         self.pc += 1;
-            //         print!("JR Z, s8 | Jump to {:X}", self.pc);
-            //     } else {
-            //         print!("JR Z, s8 | Skip");
-            //         self.pc += 2; // skip data
-            //     }
-            //     1
-            // }
-            // 0x29 => {
-            //     // Add HL to HL
-            //     self.add_to_reg_hl(self.hl);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x2A => {
-            //     // Load contents of memory at HL to A, and incrment HL
-            //     let address = u16::from_le_bytes(self.hl);
-            //     self.a = self.memory.read_byte(address);
-            //     self.hl = (address + 1).to_le_bytes();
-            //     self.pc += 1;
-            //     2
-            // }
-            // 0x2C => {
-            //     // increment L by 1
-            //     self.hl[1] = self.increment(self.hl[1]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x2D => {
-            //     // decrement L by 1
-            //     self.hl[1] = self.decrement(self.hl[1]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x2E => {
-            //     // set L to next byte
-            //     self.hl[1] = self.next_byte();
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x2F => {
-            //     // complement / invert A
-            //     self.a = !self.a;
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x31 => {
-            //     // load next byte into stack pointer
-            //     self.sp = u16::from_le_bytes(self.next_word());
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x32 => {
-            //     // store a in memory at location hl, and decrement hl
-            //     let hl_u16 = u16::from_le_bytes(self.hl);
-            //     self.memory.write_byte(hl_u16, self.a);
-            //     self.hl = (hl_u16 - 1).to_le_bytes();
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x35 => {
-            //     // decrement memory at location HL by 1
-            //     let hl_u16 = u16::from_le_bytes(self.hl);
-            //     let mut data = self.memory.read_byte(hl_u16);
-            //     data = self.decrement(data);
-            //     self.memory.write_byte(hl_u16, data);
-            //     self.pc += 1;
-            //     3
-            // }
-            // 0x36 => {
-            //     // load next byte into memory at HL
-            //     let hl_u16 = u16::from_le_bytes(self.hl);
-            //     let data = self.next_byte();
-            //     self.memory.write_byte(hl_u16, data);
-            //     self.pc += 1;
-            //     3
-            // }
-            // 0x37 => {
-            //     self.flags.c = true;
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x3B => {
-            //     // decrement SP by 1
-            //     self.sp -= 1;
-            //     self.pc += 1;
-            //     2
-            // }
-            // 0x3C => {
-            //     // increment A by 1
-            //     self.a = self.increment(self.a);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x3D => {
-            //     // decrement L by 1
-            //     self.a = self.decrement(self.a);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x3E => {
-            //     // Load next byte to A
-            //     self.a = self.next_byte();
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x41 => {
-            //     self.bc[0] = self.bc[1];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x47 => {
-            //     // Load A to B
-            //     self.bc[0] = self.a;
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x48 => {
-            //     // load B to C
-            //     self.bc[1] = self.bc[0];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x49 => {
-            //     // load C to C, no-op
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x4A => {
-            //     // load d to c
-            //     self.de[0] = self.bc[1];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x4B => {
-            //     // load c to e
-            //     self.bc[1] = self.de[1];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x4C => {
-            //     // load h to c
-            //     self.hl[0] = self.bc[1];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x4D => {
-            //     // load l to c
-            //     self.hl[1] = self.bc[1];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x4E => {
-            //     // load memory at position hl to c
-            //     self.bc[1] = self.memory.read_byte(u16::from_le_bytes(self.hl));
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x4F => {
-            //     // load a to c
-            //     self.a = self.bc[1];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x50 => {
-            //     // load b to d
-            //     self.bc[0] = self.de[0];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x51 => {
-            //     // load c to d
-            //     self.bc[1] = self.de[0];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x52 => {
-            //     // load d to d, no-op
-            //     //self.de[0] = self.de[0];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x53 => {
-            //     // load e to d
-            //     self.de[1] = self.de[0];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x56 => {
-            //     // load memory at position hl to d
-            //     self.de[0] = self.memory.read_byte(u16::from_le_bytes(self.hl));
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x58 => {
-            //     // load b to e
-            //     self.bc[0] = self.de[1];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x5A => {
-            //     // load D to E
-            //     self.de[0] = self.de[1];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x5B => {
-            //     // load E to E, no-op
-            //     // self.de[1] = self.de[1];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x5C => {
-            //     // load H to E
-            //     self.de[1] = self.hl[0];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x5D => {
-            //     // load L to E
-            //     self.de[1] = self.hl[1];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x5E => {
-            //     // load memory at HL to E
-            //     print!("ld e, (hl) | ");
-            //     self.de[1] = self.memory.read_byte(u16::from_le_bytes(self.hl));
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x5F => {
-            //     // load A to E
-            //     print!("ld e, a | ");
-            //     self.de[1] = self.a;
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x60 => {
-            //     // load b to h
-            //     self.bc[0] = self.hl[0];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x67 => {
-            //     // load a to h
-            //     self.hl[0] = self.a;
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x6B => {
-            //     // load h to l
-            //     self.de[1] = self.hl[1];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x6E => {
-            //     // load memory at position hl to l
-            //     self.hl[1] = self.memory.read_byte(u16::from_le_bytes(self.hl));
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x6F => {
-            //     // load a to l
-            //     self.hl[1] = self.a;
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x70 => {
-            //     self.memory
-            //         .write_byte(u16::from_le_bytes(self.hl), self.bc[0]);
-            //     self.pc += 1;
-            //     2
-            // }
-            // 0x71 => {
-            //     self.memory
-            //         .write_byte(u16::from_le_bytes(self.hl), self.bc[1]);
-            //     self.pc += 1;
-            //     2
-            // }
-            // 0x72 => {
-            //     self.memory
-            //         .write_byte(u16::from_le_bytes(self.hl), self.de[0]);
-            //     self.pc += 1;
-            //     2
-            // }
-            // 0x73 => {
-            //     self.memory
-            //         .write_byte(u16::from_le_bytes(self.hl), self.de[1]);
-            //     self.pc += 1;
-            //     2
-            // }
-            // 0x74 => {
-            //     self.memory
-            //         .write_byte(u16::from_le_bytes(self.hl), self.hl[0]);
-            //     self.pc += 1;
-            //     2
-            // }
-            // 0x75 => {
-            //     self.memory
-            //         .write_byte(u16::from_le_bytes(self.hl), self.hl[1]);
-            //     self.pc += 1;
-            //     2
-            // }
-            // 0x77 => {
-            //     self.memory.write_byte(u16::from_le_bytes(self.hl), self.a);
-            //     self.pc += 1;
-            //     2
-            // }
-            // 0x78 => {
-            //     self.a = self.bc[0];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x79 => {
-            //     self.a = self.bc[1];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x7B => {
-            //     // load e to a
-            //     self.a = self.de[1];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x7C => {
-            //     // load h to a
-            //     self.a = self.hl[0];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x7D => {
-            //     // load l to a
-            //     self.a = self.hl[1];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x7E => {
-            //     // load memory at hl to a
-            //     self.a = self.memory.read_byte(u16::from_le_bytes(self.hl));
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x7F => {
-            //     // load a to a, no-op
-            //     self.pc += 1;
-            //     2
-            // }
-            // 0x80 => {
-            //     self.add(self.bc[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x81 => {
-            //     self.add(self.bc[1]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x82 => {
-            //     self.add(self.de[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x83 => {
-            //     self.add(self.de[1]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x84 => {
-            //     self.add(self.hl[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x85 => {
-            //     self.add(self.hl[1]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x87 => {
-            //     print!("add a, a | ");
-            //     self.add(self.a);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x88 => {
-            //     self.add_to_a_with_carry(self.bc[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x89 => {
-            //     self.add_to_a_with_carry(self.bc[1]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x8A => {
-            //     self.add_to_a_with_carry(self.de[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x8C => {
-            //     self.add_to_a_with_carry(self.hl[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x90 => {
-            //     // sub b from a
-            //     self.subtract(self.bc[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x91 => {
-            //     // sub c from a
-            //     self.subtract(self.bc[1]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x92 => {
-            //     // sub d from a
-            //     self.subtract(self.de[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x93 => {
-            //     // sub e from a
-            //     self.subtract(self.de[1]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x94 => {
-            //     // sub h from a
-            //     self.subtract(self.hl[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x95 => {
-            //     // sub l from a
-            //     self.subtract(self.hl[1]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x98 => {
-            //     self.sub_from_a_with_carry(self.bc[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x99 => {
-            //     self.sub_from_a_with_carry(self.bc[1]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x9A => {
-            //     self.sub_from_a_with_carry(self.de[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x9B => {
-            //     self.sub_from_a_with_carry(self.de[1]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x9C => {
-            //     self.sub_from_a_with_carry(self.hl[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x9D => {
-            //     self.sub_from_a_with_carry(self.hl[1]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0x9E => {
-            //     let data = self.memory.read_byte(u16::from_le_bytes(self.hl));
-            //     self.sub_from_a_with_carry(data);
-            //     self.pc += 1;
-            //     2
-            // }
-            // 0xA0 => {
-            //     // AND A with B and store in A
-            //     self.a &= self.bc[0];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xA1 => {
-            //     // AND A with C and store in A
-            //     self.a &= self.bc[1];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xA2 => {
-            //     // AND A with D and store in A
-            //     self.a &= self.de[0];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xA3 => {
-            //     // AND A with E and store in A
-            //     self.a &= self.de[1];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xA4 => {
-            //     // AND A with H and store in A
-            //     self.a &= self.hl[0];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xA5 => {
-            //     // AND A with L and store in A
-            //     self.a &= self.hl[1];
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xA6 => {
-            //     // AND A with memory at HL and store in A
-            //     self.a &= self.memory.read_byte(u16::from_le_bytes(self.hl));
-            //     self.pc += 1;
-            //     2
-            // }
-            // 0xA7 => {
-            //     // AND A with A and store in A
-            //     self.a &= self.a;
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xA8 => {
-            //     // XOR A with B and store in A
-            //     self.xor_a(self.bc[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xA9 => {
-            //     // XOR A with C and store in A
-            //     self.xor_a(self.bc[1]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xAA => {
-            //     // XOR A with D and store in A
-            //     self.xor_a(self.de[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xAB => {
-            //     // XOR A with E and store in A
-            //     self.xor_a(self.de[1]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xAC => {
-            //     // XOR A with H and store in A
-            //     self.xor_a(self.hl[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xAD => {
-            //     // XOR A with L and store in A
-            //     self.xor_a(self.hl[1]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xAF => {
-            //     // XOR the A register with itself
-            //     self.xor_a(self.a);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xB0 => {
-            //     // OR A with B and store in A
-            //     self.or_a(self.bc[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xB1 => {
-            //     // OR A with C and store in A
-            //     self.or_a(self.bc[1]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xB2 => {
-            //     // OR A with D and store in A
-            //     self.or_a(self.de[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xB3 => {
-            //     // OR A with E and store in A
-            //     self.or_a(self.de[1]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xB4 => {
-            //     // OR A with H and store in A
-            //     self.or_a(self.hl[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xB5 => {
-            //     // OR A with L and store in A
-            //     self.or_a(self.hl[1]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xB6 => {
-            //     // OR A with (HL) and store in A
-            //     let data = self.memory.read_byte(u16::from_le_bytes(self.hl));
-            //     self.or_a(data);
-            //     self.pc += 1;
-            //     2
-            // }
-            // 0xB7 => {
-            //     // OR A with A and store in A
-            //     self.or_a(self.a);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xB8 => {
-            //     // compare A with B, set flags
-            //     self.compare_a(self.bc[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xB9 => {
-            //     // compare A with C, set flags
-            //     self.compare_a(self.bc[1]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xBA => {
-            //     // compare A with D, set flags
-            //     self.compare_a(self.de[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xBB => {
-            //     // compare A with E, set flags
-            //     self.compare_a(self.de[1]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xBC => {
-            //     // compare A with H, set flags
-            //     self.compare_a(self.hl[0]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xBD => {
-            //     // compare A with L, set flags
-            //     self.compare_a(self.hl[1]);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xBF => {
-            //     // compare A with A, set flags
-            //     self.compare_a(self.a);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xC0 => {
-            //     // RET NZ - if flag z = 0, pop word from stack and set PC to that
-            //     print!("RET NZ | ");
-            //     if !self.flags.z {
-            //         let address = self.pop_word();
-            //         print!("jump to {:#08X}", address);
-            //         self.pc = address;
-            //     } else {
-            //         print!("SKIP");
-            //         self.pc += 1;
-            //     }
-            //
-            //     1
-            // }
-            // 0xC3 => {
-            //     // Jump to the address immediately after the current instruction
-            //     let data: [u8; 2] = self.next_word();
-            //     let pos: u16 = u16::from_le_bytes(data);
-            //     self.pc = pos;
-            //     1
-            // }
-            // 0xC5 => {
-            //     self.push_word(u16::from_le_bytes(self.bc));
-            //     self.pc += 1;
-            //     4
-            // }
-            // 0xC9 => {
-            //     // RET - pop word from stack and set PC to that
-            //     print!("RET NZ | ");
-            //     let address = self.pop_word();
-            //     print!("jump to {:#08X}", address);
-            //     self.pc = address;
-            //     1
-            // }
-            // 0xCC => {
-            //     // CALL z,a16 = push PC to stack and jump to next byte IF z = 1
-            //     if self.flags.z {
-            //         self.push_word(self.pc + 1);
-            //         let address = u16::from_le_bytes(self.next_word());
-            //         print!("CALL z,a16 | {:#08X}", address);
-            //         self.pc = address;
-            //         6
-            //     } else {
-            //         print!("CALL z,a16 | SKIP");
-            //         self.pc += 2;
-            //         3
-            //     }
-            // }
-            // 0xD5 => {
-            //     self.push_word(u16::from_le_bytes(self.de));
-            //     self.pc += 1;
-            //     4
-            // }
-            // 0xCB => {
-            //     self.pc += 1;
-            //     self.handle_word_opcode()
-            // }
-            // 0xCD => {
-            //     // CALL a16 = push PC to stack and jump to next byte
-            //     self.push_word(self.pc + 1);
-            //     let address = u16::from_le_bytes(self.next_word());
-            //     print!("CALL a16 | {:#08X}", address);
-            //     self.pc = address;
-            //     1
-            // }
-            // 0xD2 => {
-            //     // Jump to address in next word if carry flag is true, or continue
-            //     if self.flags.c {
-            //         self.pc = u16::from_le_bytes(self.next_word());
-            //     } else {
-            //         self.pc += 1;
-            //     }
-            //     1
-            // }
-            // 0xD6 => {
-            //     // subtract net byte from A and saver to A
-            //     let data = self.next_byte();
-            //     self.subtract(data);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xE0 => {
-            //     // Store A to address at memory 0xFFxx, where xx is the next byte
-            //     let address = self.next_byte();
-            //     self.memory
-            //         .write_byte(u16::from_le_bytes([address, 0xff]), self.a);
-            //     self.pc += 1;
-            //     3
-            // }
-            // 0xE1 => {
-            //     // pop stack to HL
-            //     print!("pop hl | ");
-            //     self.hl = self.pop_word().to_le_bytes();
-            //     self.pc += 1;
-            //     3
-            // }
-            // 0xE2 => {
-            //     // Store A to address at memory 0xFFxx, where xx is register C
-            //     let address = self.bc[1];
-            //     self.memory
-            //         .write_byte(u16::from_le_bytes([address, 0xff]), self.a);
-            //     self.pc += 1;
-            //     2
-            // }
-            // 0xE5 => {
-            //     self.push_word(u16::from_le_bytes(self.hl));
-            //     self.pc += 1;
-            //     4
-            // }
-            // 0xE6 => {
-            //     let data = self.next_byte();
-            //     self.a &= data;
-            //     self.pc += 1;
-            //     2
-            // }
-            // 0xE9 => {
-            //     self.pc = u16::from_le_bytes(self.hl);
-            //     1
-            // }
-            //
-            // 0xEA => {
-            //     // Store A to address at memory 0xFFxx, where xx is the next byte
-            //     let address = u16::from_le_bytes(self.next_word());
-            //     self.memory.write_byte(address, self.a);
-            //     self.pc += 4;
-            //     1
-            // }
-            // 0xEF => {
-            //     // RST 5
-            //     self.push_word(self.pc);
-            //     self.pc = 0x28;
-            //     4
-            // }
-            // 0xF0 => {
-            //     // Load address at memory 0xFFxx into A, where xx is the next byte
-            //     let data = self.next_byte();
-            //     self.a = self.memory.read_byte(u16::from_le_bytes([data, 0xff]));
-            //     self.pc += 1;
-            //     3
-            // }
-            // 0xF3 => {
-            //     self.interrupts_enabled = false;
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xF5 => {
-            //     self.push_word(u16::from_le_bytes([self.flags.to_bits(), self.a]));
-            //     self.pc += 1;
-            //     4
-            // }
-            // 0xF8 => {
-            //     // LD HL, SP+s8
-            //     let int = i8::from_le_bytes([self.memory.read_byte(self.pc + 1)]);
-            //     let val = (self.sp as i16).checked_add(int as i16).expect("Fail");
-            //
-            //     self.hl = (val as u16).to_le_bytes();
-            //     self.pc += 2;
-            //     3
-            // }
-            // 0xF9 => {
-            //     // Load HL to SP
-            //     self.sp = u16::from_le_bytes(self.hl);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xFB => {
-            //     self.interrupts_enabled = true;
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xFE => {
-            //     // Set Z flag if A and next byte are equal by calculating A - next byte == 0
-            //     let data = self.next_byte();
-            //     self.compare_a(data);
-            //     self.pc += 1;
-            //     1
-            // }
-            // 0xFF => {
-            //     // RST 7, we should never hit this
-            //     print!("RST 7");
-            //     println!();
-            //     self.debug_registers();
-            //     panic!();
-            //     // self.push_word(self.pc);
-            //     // self.pc = 0x38;
-            //     // 4
-            // }
+            Instruction::RRA => self.rra(),
         };
 
         if self.state == CpuState::Stopped {
@@ -1357,118 +253,12 @@ impl Cpu {
         m_cycles
     }
 
-    // fn handle_word_opcode(&mut self) -> usize {
-    //     let instruction = self.cartridge.data[self.pc as usize];
-    //     print!("{:#04X} | ", instruction);
-    //
-    //     let register_byte = instruction & 0x7;
-    //     let register = match register_byte {
-    //         0 => Register::B,
-    //         1 => Register::C,
-    //         2 => Register::D,
-    //         3 => Register::E,
-    //         4 => Register::H,
-    //         5 => Register::L,
-    //         6 => Register::HL,
-    //         7 => Register::A,
-    //         _ => {
-    //             println!();
-    //             self.debug_registers();
-    //             panic!("Unknown 16-bit instruction register {:?}", register_byte);
-    //         }
-    //     };
-    //
-    //     print!("reg {:?} | ", register);
-    //
-    //     match instruction & 0b11000000 {
-    //         0x00 => {
-    //             // Shift / rotate
-    //             let opcode_byte = (instruction & 0b111000) >> 3; // bit 3, 4 and 5 give the opcode
-    //
-    //             match opcode_byte {
-    //                 // 0 => {
-    //                 //     // RLC
-    //                 //     1
-    //                 // }
-    //                 // 1 => {
-    //                 //     // RRC
-    //                 //     1
-    //                 // }
-    //                 // 2 => {
-    //                 //     // RL
-    //                 //     1
-    //                 // }
-    //                 // 3 => {
-    //                 //     // RR
-    //                 //     1
-    //                 // }
-    //                 // 4 => {
-    //                 //     // SLA
-    //                 //     1
-    //                 // }
-    //                 // 5 => {
-    //                 //     // SRA
-    //                 //     1
-    //                 // }
-    //                 6 => {
-    //                     // SWAP
-    //                     if register == Register::HL {
-    //                         self.swap_memory(u16::from_le_bytes(self.hl));
-    //                         self.pc += 1;
-    //                         4
-    //                     } else {
-    //                         self.swap_register(register);
-    //                         self.pc += 1;
-    //                         1
-    //                     }
-    //                 }
-    //                 // 7 => {
-    //                 //     // SRL
-    //                 //     1
-    //                 // }
-    //                 _ => {
-    //                     println!();
-    //                     self.debug_registers();
-    //                     panic!(
-    //                         "Unknown 16-bit instruction opcode {:#08b} {:?}",
-    //                         opcode_byte, opcode_byte
-    //                     );
-    //                 }
-    //             }
-    //         }
-    //         0x40 => {
-    //             // BIT
-    //             // divide by 8 and take remainder of mod 8
-    //             let bit = (instruction >> 3) & 0x7;
-    //             print!("bit {:#04X}", bit);
-    //
-    //             self.flags.z = (*self.get_register(register) >> bit) & 0x1 == 0x0;
-    //             self.flags.n = false;
-    //             self.flags.h = true;
-    //
-    //             self.pc += 1;
-    //             4
-    //         }
-    //         // 0x80 => {
-    //         //     // RES
-    //         //     1
-    //         // }
-    //         // 0xC0 => {
-    //         //     // SET
-    //         //     1
-    //         // }
-    //         _ => {
-    //             println!();
-    //             self.debug_registers();
-    //             panic!("Unknown 16-bit instruction type");
-    //         }
-    //     }
-    // }
-
     fn handle_cb(&mut self, instruction: InstructionCB) -> usize {
         match instruction {
             InstructionCB::SWAP(source) => self.swap(source),
             InstructionCB::BIT(bit, target) => self.bit(bit, target),
+            InstructionCB::RR(source) => self.rr(source),
+            InstructionCB::SRL(source) => self.srl(source),
         }
     }
 
@@ -1621,6 +411,76 @@ impl Cpu {
         cycles
     }
 
+    fn rr(&mut self, source: Operand) -> usize {
+        let mut cycles = 2;
+        let result = match source {
+            Operand::Register(register) => {
+                let data = self.get_register(register);
+                let carry_prev = self.flags.c as u8;
+                self.flags.c = data & 0x1 == 0x1;
+                let result = (data >> 1) | carry_prev << 7;
+                self.set_register(register, result);
+                result
+            }
+            Operand::MemoryLocation(location) => match location {
+                MemoryLocation::RegisterPair(pair) => {
+                    let memory_pos = self.get_register_pair(pair);
+                    let data = self.memory.read_byte(memory_pos);
+
+                    let carry_prev = self.flags.c as u8;
+                    self.flags.c = data & 0x1 == 0x1;
+                    let result = (data >> 1) | carry_prev << 7;
+
+                    self.memory.write_byte(memory_pos, result);
+                    cycles = 4;
+                    result
+                }
+                _ => panic!("should not happen"),
+            },
+            _ => panic!("should not happen"),
+        };
+
+        self.flags.z = result == 0;
+        self.flags.n = false;
+        self.flags.h = false;
+
+        cycles
+    }
+
+    fn srl(&mut self, source: Operand) -> usize {
+        let mut cycles = 2;
+        let result = match source {
+            Operand::Register(register) => {
+                let data = self.get_register(register);
+                self.flags.c = data & 0x1 == 0x1;
+                let result = data >> 1;
+                self.set_register(register, result);
+                result
+            }
+            Operand::MemoryLocation(location) => match location {
+                MemoryLocation::RegisterPair(pair) => {
+                    let memory_pos = self.get_register_pair(pair);
+                    let data = self.memory.read_byte(memory_pos);
+
+                    self.flags.c = data & 0x1 == 0x1;
+                    let result = data >> 1;
+
+                    self.memory.write_byte(memory_pos, result);
+                    cycles = 4;
+                    result
+                }
+                _ => panic!("should not happen"),
+            },
+            _ => panic!("should not happen"),
+        };
+
+        self.flags.z = result == 0;
+        self.flags.n = false;
+        self.flags.h = false;
+
+        cycles
+    }
+
     fn bit(&mut self, bit: u8, target: Operand) -> usize {
         let mut cycles = 2;
 
@@ -1669,7 +529,8 @@ impl Cpu {
                                 3
                             }
                             ImmediateOperand::A16(operand) => {
-                                self.memory.write_word(operand, source_data as u16);
+                                self.debug_all();
+                                self.memory.write_byte(operand, source_data);
                                 4
                             }
                             _ => panic!("not implemented"),
@@ -1774,7 +635,7 @@ impl Cpu {
                     2
                 }
                 Operand::MemoryLocation(MemoryLocation::RegisterPair(register_pair)) => {
-                    self.set_register_pair(register_pair, u16::from_le_bytes([operand, 0x00]));
+                    self.memory.write_byte(self.get_register_pair(register_pair), operand);
                     3
                 }
                 _ => {
@@ -1834,7 +695,8 @@ impl Cpu {
 
     fn push_word(&mut self, word: u16) {
         self.sp -= 1;
-        self.memory.write_byte(self.sp, ((word & 0xFF00) >> 8) as u8);
+        self.memory
+            .write_byte(self.sp, ((word & 0xFF00) >> 8) as u8);
 
         self.sp -= 1;
         self.memory.write_byte(self.sp, (word & 0xFF) as u8);
@@ -1908,7 +770,18 @@ impl Cpu {
                 self.set_register_pair(pair, word);
                 cycles = 2;
             }
-            Operand::MemoryLocation(_) => panic!("not implemented"),
+            Operand::MemoryLocation(location) => match location {
+                MemoryLocation::RegisterPair(pair) => {
+                    let byte = self.memory.read_byte(self.get_register_pair(pair)).wrapping_sub(1);
+
+                    self.memory.write_byte(self.get_register_pair(pair), byte);
+                    self.flags.z = byte == 0;
+                    self.flags.n = true;
+                    self.flags.h = (byte & 0xF) == 0xF;
+                    cycles = 3;
+                }
+                _ => panic!("not implemented"),
+            } ,
             Operand::ImmediateOperand(_) => panic!("not implemented"),
             Operand::StackPointer => {
                 self.sp = self.sp.wrapping_sub(1);
@@ -1923,11 +796,16 @@ impl Cpu {
         let (source_data, cycles) = match source {
             Operand::Register(source) => (self.get_register(source), 1),
             Operand::MemoryLocation(location) => match location {
-                MemoryLocation::RegisterPair(pair) => (self.memory.read_byte(self.get_register_pair(pair)), 2),
-                _ =>panic!("Should not happen"),
-            }
+                MemoryLocation::RegisterPair(pair) => {
+                    (self.memory.read_byte(self.get_register_pair(pair)), 2)
+                }
+                _ => panic!("Should not happen"),
+            },
             Operand::RegisterPair(_) => panic!("Should not happen"),
-            Operand::ImmediateOperand(_) => panic!("not implemented"),
+            Operand::ImmediateOperand(immediate_operand) => match immediate_operand {
+                ImmediateOperand::D8(operand) => (operand, 2),
+                _ => panic!("Should not happen"),
+            },
             Operand::StackPointer => panic!("not implemented"),
         };
 
@@ -1943,7 +821,12 @@ impl Cpu {
     fn or_a(&mut self, source: Operand) -> usize {
         let (source_data, cycles) = match source {
             Operand::Register(source) => (self.get_register(source), 1),
-            Operand::MemoryLocation(_) => panic!("not implemented"), // 2 cycles
+            Operand::MemoryLocation(location) => match location {
+                MemoryLocation::RegisterPair(pair) => {
+                    (self.memory.read_byte(self.get_register_pair(pair)), 2)
+                }
+                _ => panic!("not implemented"),
+            }, // 2 cycles
             Operand::RegisterPair(_) => panic!("Should not happen"),
             Operand::ImmediateOperand(_) => panic!("not implemented"),
             Operand::StackPointer => panic!("not implemented"),
@@ -2146,60 +1029,44 @@ impl Cpu {
         cycles
     }
 
-    fn adc(&mut self, adc: Adc) -> usize {
+    fn adc(&mut self, operand: Operand) -> usize {
         let mut cycles = 1;
-        let result = match adc.source {
+        let result = match operand {
             Operand::ImmediateOperand(source_operand) => match source_operand {
-                ImmediateOperand::D8(source_data) => match adc.target {
-                    Operand::Register(target_register) => {
-                        cycles = 2;
-                        let current_register = self.get_register(target_register);
-                        let result =
-                            current_register as u16 + source_data as u16 + self.flags.c as u16;
-                        self.flags.h =
-                            ((current_register & 0x0F) + (source_data & 0x0F) + self.flags.c as u8)
-                                & 0x10
-                                == 0x10;
-                        self.set_register(target_register, (result & 0xFF) as u8);
-                        result
-                    }
-                    _ => panic!("not implemented"),
-                },
-                _ => panic!("not implemented"),
-            },
-            Operand::Register(source_register) => match adc.target {
-                Operand::Register(target_register) => {
-                    let current_register = self.get_register(target_register);
-                    let source_data = self.get_register(source_register);
+                ImmediateOperand::D8(source_data) => {
+                    cycles = 2;
+                    let current_register = self.a;
                     let result = current_register as u16 + source_data as u16 + self.flags.c as u16;
                     self.flags.h =
                         ((current_register & 0x0F) + (source_data & 0x0F) + self.flags.c as u8)
                             & 0x10
                             == 0x10;
-                    self.set_register(target_register, (result & 0xFF) as u8);
                     result
                 }
                 _ => panic!("not implemented"),
             },
+            Operand::Register(source_register) => {
+                let current_register = self.a;
+                let source_data = self.get_register(source_register);
+                let result = current_register as u16 + source_data as u16 + self.flags.c as u16;
+                self.flags.h =
+                    ((current_register & 0x0F) + (source_data & 0x0F) + self.flags.c as u8) & 0x10
+                        == 0x10;
+                result
+            }
             Operand::MemoryLocation(memory_location) => match memory_location {
-                MemoryLocation::RegisterPair(source_pair) => match adc.target {
-                    Operand::Register(target_register) => {
-                        cycles = 2;
+                MemoryLocation::RegisterPair(source_pair) => {
+                    cycles = 2;
 
-                        let current_register = self.get_register(target_register);
-                        let source_data =
-                            self.memory.read_byte(self.get_register_pair(source_pair));
-                        let result =
-                            current_register as u16 + source_data as u16 + self.flags.c as u16;
-                        self.flags.h =
-                            ((current_register & 0x0F) + (source_data & 0x0F) + self.flags.c as u8)
-                                & 0x10
-                                == 0x10;
-                        self.set_register(target_register, (result & 0xFF) as u8);
-                        result
-                    }
-                    _ => panic!("not implemented"),
-                },
+                    let current_register = self.a;
+                    let source_data = self.memory.read_byte(self.get_register_pair(source_pair));
+                    let result = current_register as u16 + source_data as u16 + self.flags.c as u16;
+                    self.flags.h =
+                        ((current_register & 0x0F) + (source_data & 0x0F) + self.flags.c as u8)
+                            & 0x10
+                            == 0x10;
+                    result
+                }
                 _ => panic!("not implemented"),
             },
             _ => {
@@ -2211,12 +1078,7 @@ impl Cpu {
 
         self.flags.c = result > 0xFF;
 
-        match adc.target {
-            Operand::Register(target_register) => {
-                self.set_register(target_register, (result & 0xFF) as u8);
-            }
-            _ => panic!("should not happen"),
-        }
+        self.a = (result & 0xFF) as u8;
 
         self.flags.z = (result & 0xFF) == 0;
         self.flags.n = false;
@@ -2254,7 +1116,7 @@ impl Cpu {
      * Shift A right, placing the rightmost bit in the carry flag. Set the leftmost
      * bit of A to the old value of the carry flag.
      */
-    fn rra(&mut self) {
+    fn rra(&mut self) -> usize {
         let mut byte = self.a;
         let carry = self.flags.c;
         self.flags.c = (byte & 0x1) == 0x1;
@@ -2263,6 +1125,8 @@ impl Cpu {
             byte |= 0x80;
         }
         self.a = byte;
+
+        1
     }
 
     /**
@@ -2410,10 +1274,26 @@ impl Cpu {
         event!(Level::ERROR, "--- STACK END ---");
     }
 
+    fn debug_current_instruction(&self)
+    {
+        event!(Level::ERROR, "--- CURRENT INSTRUCTION ---");
+        event!(
+            Level::ERROR,
+            "Current opcode: {:#04X}",
+            self.current_opcode.unwrap(),
+        );
+        event!(
+            Level::ERROR,
+            "Current instruction: {}",
+            self.current_instruction.unwrap(),
+        );
+    }
+
     fn debug_all(&mut self) {
         self.debug_registers();
         self.debug_flags();
         self.debug_video();
+        self.debug_current_instruction();
     }
 
     fn swap_memory(&mut self, pos: u16) {
@@ -2495,8 +1375,8 @@ impl Cpu {
 #[cfg(test)]
 mod tests {
     use crate::cartridge::CartridgeHeader;
-    use crate::{Cartridge, Cpu};
     use crate::cpu::{CpuState, STACK_START};
+    use crate::{Cartridge, Cpu};
 
     #[test]
     fn it_executes_call() {

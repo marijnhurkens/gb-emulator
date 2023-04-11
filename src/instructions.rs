@@ -125,6 +125,7 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
             let operand = helpers::u8_to_i8(memory.read_byte(pc + 1));
             (Instruction::JR(ImmediateOperand::S8(operand), None), 2)
         }
+        0x1F => (Instruction::RRA, 1),
         0x20 => {
             let operand = helpers::u8_to_i8(memory.read_byte(pc + 1));
             (
@@ -182,13 +183,7 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
             let source = int_to_register(opcode & 0x07)
                 .unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
 
-            (
-                Instruction::ADC(Adc {
-                    source,
-                    target: Operand::Register(Register::A),
-                }),
-                1,
-            )
+            (Instruction::ADC(source), 1)
         }
         0x90..=0x97 => {
             let source = int_to_register(opcode & 0x07)
@@ -238,11 +233,23 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
         }
         0xC2 => {
             let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
-            (Instruction::JP(Operand::ImmediateOperand(ImmediateOperand::A16(operand)), Some(Condition::NZ)), 3)
+            (
+                Instruction::JP(
+                    Operand::ImmediateOperand(ImmediateOperand::A16(operand)),
+                    Some(Condition::NZ),
+                ),
+                3,
+            )
         }
         0xC3 => {
             let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
-            (Instruction::JP(Operand::ImmediateOperand(ImmediateOperand::A16(operand)), None), 3)
+            (
+                Instruction::JP(
+                    Operand::ImmediateOperand(ImmediateOperand::A16(operand)),
+                    None,
+                ),
+                3,
+            )
         }
         0xC5 | 0xD5 | 0xE5 | 0xF5 => {
             let source = match opcode {
@@ -278,9 +285,15 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
         ),
         0xCA => {
             let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
-            (Instruction::JP(Operand::ImmediateOperand(ImmediateOperand::A16(operand)), Some(Condition::Z)), 3)
+            (
+                Instruction::JP(
+                    Operand::ImmediateOperand(ImmediateOperand::A16(operand)),
+                    Some(Condition::Z),
+                ),
+                3,
+            )
         }
-            0xCB => {
+        0xCB => {
             let instruction = decode_cb(memory.read_byte(pc + 1));
             (Instruction::CB(instruction), 2)
         }
@@ -291,9 +304,21 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
                 3,
             )
         }
+        0xCE => (
+            Instruction::ADC(Operand::ImmediateOperand(ImmediateOperand::D8(
+                memory.read_byte(pc + 1),
+            ))),
+            2,
+        ),
         0xD2 => {
             let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
-            (Instruction::JP(Operand::ImmediateOperand(ImmediateOperand::A16(operand)), Some(Condition::NC)), 3)
+            (
+                Instruction::JP(
+                    Operand::ImmediateOperand(ImmediateOperand::A16(operand)),
+                    Some(Condition::NC),
+                ),
+                3,
+            )
         }
         0xD4 => {
             let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
@@ -351,7 +376,10 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
             2,
         ),
         0xE9 => (
-            Instruction::JP(Operand::RegisterPair(RegisterPair(Register::H, Register::L)), None),
+            Instruction::JP(
+                Operand::RegisterPair(RegisterPair(Register::H, Register::L)),
+                None,
+            ),
             1,
         ),
         0xEA => {
@@ -364,6 +392,13 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
                     source: Operand::Register(Register::A),
                 }),
                 3,
+            )
+        }
+        0xEE => {
+            let operand = memory.read_byte(pc + 1);
+            (
+                Instruction::XOR(Operand::ImmediateOperand(ImmediateOperand::D8(operand))),
+                2,
             )
         }
         0xF0 => {
@@ -412,11 +447,23 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
 
 fn decode_cb(opcode: u8) -> InstructionCB {
     match opcode {
+        0x18..=0x1f => {
+            let source =
+                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+
+            InstructionCB::RR(source)
+        }
         0x30..=0x37 => {
             let source =
                 int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
 
             InstructionCB::SWAP(source)
+        }
+        0x38..=0x3F => {
+            let source =
+                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+
+            InstructionCB::SRL(source)
         }
         0x40..=0x7F => {
             // BIT
@@ -457,7 +504,7 @@ pub enum Instruction {
     INC(Operand),
     DEC(Operand),
     ADD(Add),
-    ADC(Adc),
+    ADC(Operand),
     SUB(Operand),
     SBC(Operand),
     LD(Load),
@@ -477,6 +524,7 @@ pub enum Instruction {
     POP(RegisterPair),
     RST(u8),
     RLCA,
+    RRA,
 }
 
 impl Display for Instruction {
@@ -489,7 +537,7 @@ impl Display for Instruction {
             Instruction::DEC(operand) => write!(f, "DEC {}", operand),
             Instruction::INC(operand) => write!(f, "INC {}", operand),
             Instruction::ADD(add) => write!(f, "ADD {}", add),
-            Instruction::ADC(add) => write!(f, "ADC {}", add),
+            Instruction::ADC(operand) => write!(f, "ADC A, {}", operand),
             Instruction::SUB(operand) => write!(f, "SUB {}", operand),
             Instruction::SBC(operand) => write!(f, "SBC {}", operand),
             Instruction::LD(load) => write!(f, "LD {}", load),
@@ -502,7 +550,7 @@ impl Display for Instruction {
                 } else {
                     write!(f, "JP {}", operand)
                 }
-            },
+            }
             Instruction::JR(operand, condition) => {
                 if let Some(condition) = condition {
                     write!(f, "JR {}, {}", condition, operand)
@@ -534,6 +582,7 @@ impl Display for Instruction {
             Instruction::RST(number) => write!(f, "RST {}", number),
             Instruction::PUSH(pair) => write!(f, "PUSH {}", pair),
             Instruction::POP(pair) => write!(f, "POP {}", pair),
+            Instruction::RRA => write!(f, "RRA"),
         }
     }
 }
@@ -541,6 +590,8 @@ impl Display for Instruction {
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum InstructionCB {
     SWAP(Operand),
+    RR(Operand),
+    SRL(Operand),
     BIT(u8, Operand),
 }
 
@@ -548,6 +599,8 @@ impl Display for InstructionCB {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             InstructionCB::SWAP(operand) => write!(f, "SWAP {}", operand),
+            InstructionCB::RR(operand) => write!(f, "RR {}", operand),
+            InstructionCB::SRL(operand) => write!(f, "SRL {}", operand),
             InstructionCB::BIT(bit, operand) => write!(f, "BIT {}, {}", bit, operand),
         }
     }
@@ -572,18 +625,6 @@ pub struct Add {
 }
 
 impl Display for Add {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}, {}", self.target, self.source)
-    }
-}
-
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
-pub struct Adc {
-    pub target: Operand,
-    pub source: Operand,
-}
-
-impl Display for Adc {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}, {}", self.target, self.source)
     }

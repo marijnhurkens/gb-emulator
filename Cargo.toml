@@ -17,7 +17,6 @@ tracing-subscriber = "0.3.16"
 
 [patch.crates-io]
 ggez = { git = 'https://github.com/ggez/ggez.git', branch = "devel"  }
-bvh = {git = "https://github.com/dbenson24/bvh", branch = "master" }
 
 [profile.dev]
 opt-level = 1

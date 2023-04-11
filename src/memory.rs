@@ -164,12 +164,10 @@ impl Memory {
     }
 
     fn write_interrupt_flags(&mut self, byte: u8) {
-        //print!("write interrupt flags {:#04X} | ", byte);
         self.interrupt_flags = InterruptFlags::from_bits(byte).unwrap();
     }
 
     fn write_byte_to_storage(&mut self, pos: u16, byte: u8) {
-        //print!("write byte {:#08X} -> {:#04X} | ", pos, byte);
         self.storage.set_position(pos as u64);
         self.storage.write_u8(byte).unwrap()
     }
@@ -181,8 +179,6 @@ impl Memory {
     }
 
     pub fn write_word(&mut self, pos: u16, word: u16) {
-        //print!("write word {:#08X} -> {:#08X} | ", pos, word);
-
         let bytes = word.to_le_bytes();
         self.write_byte(pos, bytes[0]);
         self.write_byte(pos + 1, bytes[1]);
@@ -207,7 +203,8 @@ impl Memory {
             0xFF42 => self.video.scy,
             0xFF43 => self.video.scx,
             0xFF44 => {
-                self.video.line // LY, LCD y coordinate
+                // self.video.line // LY, LCD y coordinate
+               0x90
             }
             0xFF45 => {
                 unimplemented!()
