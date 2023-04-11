@@ -302,22 +302,22 @@ impl Cpu {
         let mut cycles = 5;
         match condition {
             Some(Condition::Z) => {
-                if self.flags.z {
-                    return 2;
-                }
-            }
-            Some(Condition::C) => {
-                if self.flags.c {
-                    return 2;
-                }
-            }
-            Some(Condition::NZ) => {
                 if !self.flags.z {
                     return 2;
                 }
             }
-            Some(Condition::NC) => {
+            Some(Condition::C) => {
                 if !self.flags.c {
+                    return 2;
+                }
+            }
+            Some(Condition::NZ) => {
+                if self.flags.z {
+                    return 2;
+                }
+            }
+            Some(Condition::NC) => {
+                if self.flags.c {
                     return 2;
                 }
             }
@@ -529,7 +529,6 @@ impl Cpu {
                                 3
                             }
                             ImmediateOperand::A16(operand) => {
-                                self.debug_all();
                                 self.memory.write_byte(operand, source_data);
                                 4
                             }
@@ -971,9 +970,11 @@ impl Cpu {
                     Operand::Register(target_register) => {
                         cycles = 2;
                         let current_register = self.get_register(target_register);
-                        let result = current_register as u16 + source_data as u16;
+                        let result = current_register as u32 + source_data as u32;
                         self.flags.h =
                             ((current_register & 0x0F) + (source_data & 0x0F)) & 0x10 == 0x10;
+                        self.flags.c = result > 0xFF;
+                        self.flags.z = (result & 0xFF) == 0;
                         result
                     }
                     _ => panic!("not implemented"),
@@ -984,9 +985,11 @@ impl Cpu {
                 Operand::Register(target_register) => {
                     let current_register = self.get_register(target_register);
                     let source_data = self.get_register(source_register);
-                    let result = current_register as u16 + source_data as u16;
+                    let result = current_register as u32 + source_data as u32;
                     self.flags.h =
                         ((current_register & 0x0F) + (source_data & 0x0F)) & 0x10 == 0x10;
+                    self.flags.c = result > 0xFF;
+                    self.flags.z = (result & 0xFF) == 0;
                     result
                 }
                 _ => panic!("not implemented"),
@@ -998,15 +1001,32 @@ impl Cpu {
                         let current_register = self.get_register(target_register);
                         let source_data =
                             self.memory.read_byte(self.get_register_pair(source_pair));
-                        let result = current_register as u16 + source_data as u16;
+                        let result = current_register as u32 + source_data as u32;
                         self.flags.h =
                             ((current_register & 0x0F) + (source_data & 0x0F)) & 0x10 == 0x10;
+                        self.flags.c = result > 0xFF;
+                        self.flags.z = (result & 0xFF) == 0;
                         result
                     }
                     _ => panic!("not implemented"),
                 },
                 _ => panic!("not implemented"),
             },
+            Operand::RegisterPair(source_pair) => match add.target {
+                Operand::RegisterPair(target_pair) => {
+                    cycles = 2;
+                    let current_data = self.get_register_pair(target_pair) as u32;
+                    let source_data = self.get_register_pair(source_pair) as u32;
+                    let result = current_data.wrapping_add(source_data);
+
+                    self.flags.h =
+                        ((current_data & 0x0FFF) + (source_data & 0x0FFF)) & 0x01000 == 0x01000;
+                    self.flags.c = result > 0xFFFF;
+
+                    result
+                }
+                _ => panic!("not implemented"),
+            }
             _ => {
                 event!(Level::INFO, "{:#04X}", self.pc);
                 self.debug_all();
@@ -1014,16 +1034,16 @@ impl Cpu {
             }
         };
 
-        self.flags.c = result > 0xFF;
-
         match add.target {
             Operand::Register(target_register) => {
                 self.set_register(target_register, (result & 0xFF) as u8);
             }
+            Operand::RegisterPair(target_pair) => {
+                self.set_register_pair(target_pair, (result & 0xFFFF) as u16);
+            }
             _ => panic!("should not happen"),
         }
 
-        self.flags.z = (result & 0xFF) == 0;
         self.flags.n = false;
 
         cycles
@@ -1117,6 +1137,10 @@ impl Cpu {
      * bit of A to the old value of the carry flag.
      */
     fn rra(&mut self) -> usize {
+        self.flags.h = false;
+        self.flags.z = false;
+        self.flags.n = false;
+
         let mut byte = self.a;
         let carry = self.flags.c;
         self.flags.c = (byte & 0x1) == 0x1;
@@ -1159,12 +1183,12 @@ impl Cpu {
         if let Some(condition) = condition {
             match condition {
                 Condition::Z => {
-                    if !(self.flags.z) {
+                    if !self.flags.z {
                         return 3;
                     }
                 }
                 Condition::C => {
-                    if !(self.flags.c) {
+                    if !self.flags.c {
                         return 3;
                     }
                 }

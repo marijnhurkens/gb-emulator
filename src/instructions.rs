@@ -87,7 +87,7 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
                 _ => panic!("Should not happend"),
             };
 
-            (Instruction::LD(Load { target, source }), 1)
+            (Instruction::ADD(Add { target, source }), 1)
         }
         0x0A | 0x1A | 0x2A | 0x3A => {
             let source = match opcode {
