@@ -501,6 +501,20 @@ fn decode_cb(opcode: u8) -> InstructionCB {
 
             InstructionCB::BIT(bit, target)
         }
+        0x80..=0xBF => {
+            let bit = (opcode >> 3) & 0x7;
+            let target =
+                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+
+            InstructionCB::RES(bit, target)
+        }
+        0xC0..=0xFF => {
+            let bit = (opcode >> 3) & 0x7;
+            let target =
+                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+
+            InstructionCB::SET(bit, target)
+        }
         _ => panic!("Unknown CB opcode 0xCB{:X}", opcode),
     }
 }
@@ -620,6 +634,8 @@ pub enum InstructionCB {
     RR(Operand),
     SRL(Operand),
     BIT(u8, Operand),
+    RES(u8, Operand),
+    SET(u8, Operand),
 }
 
 impl Display for InstructionCB {
@@ -629,6 +645,8 @@ impl Display for InstructionCB {
             InstructionCB::RR(operand) => write!(f, "RR {}", operand),
             InstructionCB::SRL(operand) => write!(f, "SRL {}", operand),
             InstructionCB::BIT(bit, operand) => write!(f, "BIT {}, {}", bit, operand),
+            InstructionCB::RES(bit, operand) => write!(f, "RES {}, {}", bit, operand),
+            InstructionCB::SET(bit, operand) => write!(f, "SET {}, {}", bit, operand),
         }
     }
 }

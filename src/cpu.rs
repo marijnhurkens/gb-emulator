@@ -11,7 +11,7 @@ use crate::instructions::{
     decode, Add, Condition, ImmediateOperand, Instruction, InstructionCB, Load, MemoryLocation,
     Operand, Register, RegisterPair,
 };
-use crate::memory::{InterruptFlags, Memory, VideoMode};
+use crate::memory::{InterruptFlags, Memory};
 use crate::ScreenBuffer;
 
 pub const CPU_FREQ: f64 = 4_194_304.0;
@@ -149,26 +149,66 @@ impl Cpu {
 
         for _ in 0..t_cycles {
             self.memory.step();
-            let new_mode = self.memory.video.step();
 
-            // we've entered vblank, set Interrupt Flag
-            if let Some(VideoMode::VBlank) = new_mode {
-                let interrupt_flag = self.memory.read_byte(0xFF0F);
-                self.memory.write_byte(0xFF0F, interrupt_flag | 0b0000_0001);
+            let interrupt_flags = self.memory.video.step(self.memory.interrupt_flags);
+            self.memory.interrupt_flags = interrupt_flags;
 
-                if self.interrupts_enabled
+            // INTERRUPTS
+            if self.interrupts_enabled {
+                if self.memory.interrupt_flags.contains(InterruptFlags::VBLANK)
                     && self
                         .memory
                         .interrupt_enable
                         .intersects(InterruptFlags::VBLANK)
                 {
                     self.interrupts_enabled = false;
-                    let interrupt_flag = self.memory.read_byte(0xFF0F);
-                    self.memory.write_byte(0xFF0F, interrupt_flag & 0b1111_1110);
+                    let interrupt_flags =
+                        InterruptFlags::from_bits(self.memory.read_byte(0xFF0F)).unwrap();
+                    self.memory
+                        .write_byte(0xFF0F, (interrupt_flags - InterruptFlags::VBLANK).bits());
 
                     self.push_word(self.pc + 1);
                     let address = 0x0040;
                     event!(Level::INFO, "INT 40 VBLANK | {:#08X}", address);
+                    self.pc = address;
+                }
+
+                if self.memory.interrupt_flags.contains(InterruptFlags::TIMER)
+                    && self
+                        .memory
+                        .interrupt_enable
+                        .intersects(InterruptFlags::TIMER)
+                {
+                    self.interrupts_enabled = false;
+                    let interrupt_flags =
+                        InterruptFlags::from_bits(self.memory.read_byte(0xFF0F)).unwrap();
+                    self.memory
+                        .write_byte(0xFF0F, (interrupt_flags - InterruptFlags::TIMER).bits());
+
+                    self.push_word(self.pc + 1);
+                    let address = 0x0050;
+                    event!(Level::INFO, "INT 50 TIMER | {:#08X}", address);
+                    self.pc = address;
+                }
+
+                if self
+                    .memory
+                    .interrupt_flags
+                    .contains(InterruptFlags::LCD_STAT)
+                    && self
+                        .memory
+                        .interrupt_enable
+                        .intersects(InterruptFlags::LCD_STAT)
+                {
+                    self.interrupts_enabled = false;
+                    let interrupt_flags =
+                        InterruptFlags::from_bits(self.memory.read_byte(0xFF0F)).unwrap();
+                    self.memory
+                        .write_byte(0xFF0F, (interrupt_flags - InterruptFlags::LCD_STAT).bits());
+
+                    self.push_word(self.pc + 1);
+                    let address = 0x0048;
+                    event!(Level::INFO, "INT 48 STAT | {:#08X}", address);
                     self.pc = address;
                 }
             }
@@ -259,6 +299,8 @@ impl Cpu {
             InstructionCB::BIT(bit, target) => self.bit(bit, target),
             InstructionCB::RR(source) => self.rr(source),
             InstructionCB::SRL(source) => self.srl(source),
+            InstructionCB::RES(bit, target) => self.res(bit, target),
+            InstructionCB::SET(bit, target) => self.set(bit, target),
         }
     }
 
@@ -507,6 +549,54 @@ impl Cpu {
         cycles
     }
 
+    fn res(&mut self, bit: u8, target: Operand) -> usize {
+        let mut cycles = 2;
+
+        match target {
+            Operand::Register(target) => {
+                self.set_register(target, self.get_register(target) & !(0x1 << bit));
+            }
+
+            Operand::MemoryLocation(location) => match location {
+                MemoryLocation::RegisterPair(pair) => {
+                    let memory_pos = self.get_register_pair(pair);
+                    let data = self.memory.read_byte(memory_pos);
+                    self.memory.write_byte(memory_pos, data & !(0x1 << bit));
+
+                    cycles = 4;
+                }
+                _ => panic!("should not happen"),
+            },
+            _ => panic!("should not happen"),
+        }
+
+        cycles
+    }
+
+    fn set(&mut self, bit: u8, target: Operand) -> usize {
+        let mut cycles = 2;
+
+        match target {
+            Operand::Register(target) => {
+                self.set_register(target, self.get_register(target) & (0x1 << bit));
+            }
+
+            Operand::MemoryLocation(location) => match location {
+                MemoryLocation::RegisterPair(pair) => {
+                    let memory_pos = self.get_register_pair(pair);
+                    let data = self.memory.read_byte(memory_pos);
+                    self.memory.write_byte(memory_pos, data & (0x1 << bit));
+
+                    cycles = 4;
+                }
+                _ => panic!("should not happen"),
+            },
+            _ => panic!("should not happen"),
+        }
+
+        cycles
+    }
+
     fn ld(&mut self, load: Load) -> usize {
         match load.source {
             Operand::Register(source) => {
@@ -638,7 +728,8 @@ impl Cpu {
                     2
                 }
                 Operand::MemoryLocation(MemoryLocation::RegisterPair(register_pair)) => {
-                    self.memory.write_byte(self.get_register_pair(register_pair), operand);
+                    self.memory
+                        .write_byte(self.get_register_pair(register_pair), operand);
                     3
                 }
                 _ => {
@@ -673,8 +764,7 @@ impl Cpu {
                     5
                 }
                 _ => panic!("not implemented"),
-
-            }
+            },
             _ => panic!("not implemented"),
         }
     }
@@ -783,7 +873,10 @@ impl Cpu {
             }
             Operand::MemoryLocation(location) => match location {
                 MemoryLocation::RegisterPair(pair) => {
-                    let byte = self.memory.read_byte(self.get_register_pair(pair)).wrapping_sub(1);
+                    let byte = self
+                        .memory
+                        .read_byte(self.get_register_pair(pair))
+                        .wrapping_sub(1);
 
                     self.memory.write_byte(self.get_register_pair(pair), byte);
                     self.flags.z = byte == 0;
@@ -792,7 +885,7 @@ impl Cpu {
                     cycles = 3;
                 }
                 _ => panic!("not implemented"),
-            } ,
+            },
             Operand::ImmediateOperand(_) => panic!("not implemented"),
             Operand::StackPointer => {
                 self.sp = self.sp.wrapping_sub(1);
@@ -1038,7 +1131,7 @@ impl Cpu {
                     result
                 }
                 _ => panic!("not implemented"),
-            }
+            },
             _ => {
                 event!(Level::INFO, "{:#04X}", self.pc);
                 self.debug_all();
@@ -1310,8 +1403,7 @@ impl Cpu {
         event!(Level::ERROR, "--- STACK END ---");
     }
 
-    fn debug_current_instruction(&self)
-    {
+    fn debug_current_instruction(&self) {
         event!(Level::ERROR, "--- CURRENT INSTRUCTION ---");
         event!(
             Level::ERROR,

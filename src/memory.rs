@@ -6,6 +6,7 @@ use tracing::{event, Level};
 
 use crate::cpu::CPU_FREQ;
 use crate::SCREEN_BUFFER_SIZE;
+use crate::video::{LcdControl, LcdStatus, Video};
 
 const MEM_SIZE: usize = 1024 * 128;
 const VRAM_START: u16 = 0x8000;
@@ -164,7 +165,10 @@ impl Memory {
     }
 
     fn write_interrupt_flags(&mut self, byte: u8) {
-        self.interrupt_flags = InterruptFlags::from_bits(byte).unwrap();
+        self.interrupt_flags = InterruptFlags::from_bits(byte).unwrap_or_else(|| {
+            event!(Level::WARN, "Wrong IF write: {:#08b}", byte);
+            self.interrupt_flags
+        });
     }
 
     fn write_byte_to_storage(&mut self, pos: u16, byte: u8) {
@@ -199,18 +203,19 @@ impl Memory {
                 0
             } // serial control not implemented
             0xFF04 => self.div,
-            0xFF41 => self.video.read_lcd_status(),
+            0xFF40 => self.video.lcd_control.bits(),
+            0xFF41 => self.video.lcd_status.bits(),
             0xFF42 => self.video.scy,
             0xFF43 => self.video.scx,
             0xFF44 => {
-                // self.video.line // LY, LCD y coordinate
-               0x90
+                self.video.line // LY, LCD y coordinate
+                // 0x90
             }
             0xFF45 => {
                 unimplemented!()
             }
             _ => {
-                unimplemented!("IO register not implemented for {:#08X}", pos)
+                unimplemented!("IO register not implemented for {:#06X}", pos)
             }
         }
     }
@@ -228,6 +233,7 @@ impl Memory {
             0xFF41 => self.video.lcd_status = LcdStatus::from_bits(byte).unwrap(),
             0xFF42 => self.video.scy = byte,
             0xFF43 => self.video.scx = byte,
+            0xFF45 => self.video.lyc = byte,
             0xFF46 => self.oam_transfer(byte),
             0xFF47 => self.video.bg_palette = byte,
             0xFF48 => self.video.obj_0_palette = byte,
@@ -269,133 +275,30 @@ impl Memory {
             self.div_step = 0;
             (self.div, _) = self.div.overflowing_add(1);
         }
-    }
-}
 
-#[derive(Debug)]
-pub struct Video {
-    mode_step: usize,
-    vram: Cursor<Vec<u8>>,
-    line: u8,
-    scy: u8,
-    scx: u8,
-    pub mode: VideoMode,
-    // lcdc
-    pub lcd_control: LcdControl,
-    // stat
-    pub lcd_status: LcdStatus,
-    bg_palette: u8,
-    obj_0_palette: u8,
-    obj_1_palette: u8,
-    window_y: u8,
-    window_x: u8,
-    bank_select: u8,
-}
-
-#[derive(Debug, Copy, Clone)]
-#[repr(u8)]
-pub enum VideoMode {
-    OamRead = 2,
-    VramRead = 3,
-    HBlank = 0,
-    VBlank = 1,
-}
-
-bitflags! {
-    pub struct LcdStatus: u8 {
-        const LYC = 0b00000100;
+        self.step_timers();
     }
 
-    pub struct LcdControl: u8 {
-        const LCD_ENABLE =              0b10000000;
-        const WINDOW_TILE_MAP =         0b01000000;
-        const WINDOW_ENABLE =           0b00100000;
-        const WINDOW_BG_ADDRES_MODE =   0b00010000;
-        const BG_TILE_MAP =             0b00001000;
-        const OBJ_SIZE =                0b00000100;
-        const OBJ_ENABLE =              0b00000010;
-        const WINDOW_BG_DISPLAY =       0b00000001;
-    }
-}
-
-impl Video {
-    pub fn new() -> Self {
-        Self {
-            mode: VideoMode::OamRead,
-            vram: Cursor::new(vec![0; SCREEN_BUFFER_SIZE]),
-            mode_step: 0,
-            line: 0,
-            scy: 0,
-            scx: 0,
-            lcd_control: LcdControl::empty(),
-            lcd_status: LcdStatus::empty(),
-            bg_palette: 0,
-            obj_0_palette: 0,
-            obj_1_palette: 0,
-            window_y: 0,
-            window_x: 0,
-            bank_select: 0,
+    fn step_timers(&mut self) {
+        if !self.tac.contains(TimerControl::TIMER_ENABLE) {
+            return;
         }
-    }
 
-    pub fn read_lcd_status(&self) -> u8 {
-        dbg!(
-            self.mode as u8,
-            self.lcd_status.bits(),
-            self.mode as u8 | self.lcd_status.bits()
-        );
-        panic!();
-        self.mode as u8 | self.lcd_status.bits()
-    }
+        self.tima_step += 1;
+        let step = match self.tac.difference(TimerControl::TIMER_ENABLE) {
+            TimerControl::TIMER_16 => 16,
+            TimerControl::TIMER_64 => 64,
+            TimerControl::TIMER_256 => 256,
+            TimerControl::TIMER_1024 => 1024,
+            _ => panic!("should not happen"),
+        };
 
-    pub fn step(&mut self) -> Option<VideoMode> {
-        self.mode_step += 1;
-
-        match self.mode {
-            VideoMode::OamRead => {
-                if self.mode_step >= 80 {
-                    self.mode_step = 0;
-                    self.mode = VideoMode::VramRead;
-                    return Some(VideoMode::VramRead);
-                }
-                None
-            }
-            VideoMode::VramRead => {
-                if self.mode_step >= 172 {
-                    self.mode_step = 0;
-                    self.mode = VideoMode::HBlank;
-                    return Some(VideoMode::HBlank);
-                    // write scanline
-                }
-                None
-            }
-            VideoMode::HBlank => {
-                if self.mode_step >= 204 {
-                    self.mode_step = 0;
-                    self.line += 1;
-
-                    if self.line == 143 {
-                        self.mode = VideoMode::VBlank;
-                        return Some(VideoMode::VBlank);
-                    } else {
-                        self.mode = VideoMode::OamRead;
-                        return Some(VideoMode::OamRead);
-                    }
-                }
-                None
-            }
-            VideoMode::VBlank => {
-                if self.mode_step >= 456 {
-                    self.mode_step = 0;
-                    self.line += 1;
-
-                    if self.line > 153 {
-                        self.mode = VideoMode::OamRead;
-                        self.line = 0;
-                        return Some(VideoMode::OamRead);
-                    }
-                }
-                None
+        if self.tima_step > step {
+            let (new_tima, overflow) = self.tima.overflowing_add(1);
+            self.tima = new_tima;
+            if overflow {
+                self.tima = self.tma;
+                self.interrupt_flags |= InterruptFlags::TIMER;
             }
         }
     }
