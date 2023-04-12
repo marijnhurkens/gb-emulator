@@ -344,18 +344,18 @@ impl Cpu {
     fn daa(&mut self) -> usize {
         if !self.flags.n {
             if self.flags.c || self.a > 0x99 {
-                self.a += 0x60;
+                self.a = self.a.wrapping_add(0x60);
                 self.flags.c = true;
             }
             if self.flags.h || (self.a & 0x0f) > 0x9 {
-                self.a += 0x6;
+                self.a = self.a.wrapping_add(0x6);
             }
         } else {
             if self.flags.c {
-                self.a = self.a.overflowing_sub(0x60).0;
+                self.a = self.a.wrapping_sub(0x60);
             }
             if self.flags.h {
-                self.a -= 0x6;
+                self.a = self.a.wrapping_sub(0x6);
             }
         }
 
@@ -626,6 +626,10 @@ impl Cpu {
                     self.set_register_pair(target, self.get_register_pair(source));
                     2
                 }
+                Operand::StackPointer => {
+                    self.sp = self.get_register_pair(source);
+                    2
+                }
                 _ => panic!("not implemented"),
             },
             Operand::ImmediateOperand(ImmediateOperand::D8(operand)) => match load.target {
@@ -663,6 +667,14 @@ impl Cpu {
                     panic!("not implemented")
                 }
             },
+            Operand::StackPointer => match load.target {
+                Operand::ImmediateOperand(ImmediateOperand::A16(operand)) => {
+                    self.memory.write_word(operand, self.sp);
+                    5
+                }
+                _ => panic!("not implemented"),
+
+            }
             _ => panic!("not implemented"),
         }
     }

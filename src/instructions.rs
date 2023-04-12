@@ -77,6 +77,16 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
             )
         }
         0x07 => (Instruction::RLCA, 1),
+        0x08 => {
+            let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
+            (
+                Instruction::LD(Load {
+                    source: Operand::StackPointer,
+                    target: Operand::ImmediateOperand(ImmediateOperand::A16(operand)),
+                }),
+                3,
+            )
+        }
         0x09 | 0x19 | 0x29 | 0x39 => {
             let target = Operand::RegisterPair(RegisterPair(Register::H, Register::L));
             let source = match opcode {
@@ -353,6 +363,16 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
         0xD0 => (Instruction::RET(Some(Condition::NC)), 1),
         0xD8 => (Instruction::RET(Some(Condition::C)), 1),
         0xD9 => (Instruction::RETI, 1),
+        0xDA => {
+            let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
+            (
+                Instruction::JP(
+                    Operand::ImmediateOperand(ImmediateOperand::A16(operand)),
+                    Some(Condition::C),
+                ),
+                3,
+            )
+        }
         0xE0 => (
             Instruction::LD(Load {
                 target: Operand::MemoryLocation(MemoryLocation::ImmediateOperand(
@@ -421,6 +441,13 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
             1,
         ),
         0xF3 => (Instruction::DI, 1),
+        0xF9 => (
+            Instruction::LD(Load {
+                source: Operand::RegisterPair(RegisterPair(Register::H, Register::L)),
+                target: Operand::StackPointer,
+            }),
+            1,
+        ),
         0xFA => {
             let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
             (

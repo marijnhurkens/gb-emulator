@@ -141,7 +141,7 @@ impl Memory {
             pos
         );
         match pos {
-            0x0000..=0x7FFF => (), //print!("write rom, not implemented |"),
+            0x0000..=0x7FFF => (), //self.write_byte_to_storage(pos, byte), //print!("write rom, not implemented |"),
             0x8000..=0x9FFF => self.write_byte_to_vram(pos - VRAM_START, byte),
             0xA000..=0xBFFF => self.write_byte_to_storage(pos, byte), // ??
             0xC000..=0xDFFF => self.write_byte_to_storage(pos, byte), // wram
