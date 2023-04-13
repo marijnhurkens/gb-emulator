@@ -1,6 +1,7 @@
 use std::io::{Cursor, Read, Write};
 
 use bitflags::bitflags;
+use bitvec::macros::internal::funty::Fundamental;
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use tracing::{event, Level};
 
@@ -28,6 +29,11 @@ bitflags! {
         const TIMER_64     = 0b00000010;
         const TIMER_256    = 0b00000011;
     }
+
+    struct SerialControl: u8 {
+        const TRANSFER_START    = 0b10000000;
+        const SHIFT_CLOCK       = 0b00000001;
+    }
 }
 
 #[derive(Debug)]
@@ -46,6 +52,8 @@ pub struct Memory {
     buttons: u8,
     bcps: u8,
     bcpd: u8,
+    sb: u8,
+    sc: SerialControl,
 }
 
 impl Memory {
@@ -54,10 +62,10 @@ impl Memory {
             storage: Cursor::new(vec![0x0; MEM_SIZE]),
             rom,
             video: Video::new(),
-            interrupt_flags: InterruptFlags::empty(),
+            interrupt_flags: InterruptFlags::VBLANK,
             interrupt_enable: InterruptFlags::empty(),
             div_step: 0,
-            div: 0,
+            div: 0x18,
             tima_step: 0,
             tima: 0,
             tma: 0,
@@ -65,6 +73,8 @@ impl Memory {
             buttons: 0b11110000,
             bcps: 0,
             bcpd: 0,
+            sb: 0,
+            sc: SerialControl::empty(),
         }
     }
 
@@ -208,8 +218,8 @@ impl Memory {
             0xFF42 => self.video.scy,
             0xFF43 => self.video.scx,
             0xFF44 => {
-                self.video.line // LY, LCD y coordinate
-                // 0x90
+                // self.video.line // LY, LCD y coordinate
+                0x90
             }
             0xFF45 => {
                 unimplemented!()
@@ -223,7 +233,8 @@ impl Memory {
     fn write_io_register(&mut self, pos: u16, byte: u8) {
         match pos {
             0xFF00 => self.buttons = byte,
-            0xFF01 | 0xFF02 => event!(Level::WARN, "Serial transfer register set, not implemented"),
+            0xFF01 => self.sb = byte,
+            0xFF02 => self.sc = SerialControl::from_bits(byte).unwrap(),
             0xFF04 => self.div = 0, // always resets when written
             0xFF05 => self.tima = byte,
             0xFF06 => self.tma = byte,
@@ -300,6 +311,14 @@ impl Memory {
                 self.tima = self.tma;
                 self.interrupt_flags |= InterruptFlags::TIMER;
             }
+        }
+    }
+
+    pub fn handle_serial(&mut self)
+    {
+        if self.sc.contains(SerialControl::TRANSFER_START) {
+            println!("{}", self.sb.as_char().unwrap());
+            self.sc -= SerialControl::TRANSFER_START;
         }
     }
 }

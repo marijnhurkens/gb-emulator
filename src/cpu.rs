@@ -110,13 +110,6 @@ impl Cpu {
     }
 
     pub fn cycle(&mut self, screen_buffer: &Option<ScreenBuffer>) {
-        // Draw to screen
-        if let Some(buffer) = &screen_buffer {
-            let mut guard = buffer.lock().unwrap();
-            (*guard) = self.memory.read_vram();
-            drop(guard);
-        }
-
         // Catch PC out of bounds
         if self.pc as usize > 0xFFFF {
             panic!("PC out of bounds");
@@ -161,6 +154,13 @@ impl Cpu {
                         .interrupt_enable
                         .intersects(InterruptFlags::VBLANK)
                 {
+                    // Draw to screen
+                    if let Some(buffer) = &screen_buffer {
+                        let mut guard = buffer.lock().unwrap();
+                        (*guard) = self.memory.read_vram();
+                        drop(guard);
+                    }
+
                     self.interrupts_enabled = false;
                     let interrupt_flags =
                         InterruptFlags::from_bits(self.memory.read_byte(0xFF0F)).unwrap();
@@ -214,6 +214,8 @@ impl Cpu {
             }
         }
 
+        self.memory.handle_serial();
+
         // handle timing
         let end_time = Instant::now();
         let expected_time = Duration::from_secs_f64(t_cycles as f64 / CPU_FREQ);
@@ -266,9 +268,12 @@ impl Cpu {
             Instruction::PUSH(source) => self.push(source),
             Instruction::POP(target) => self.pop(target),
             Instruction::RLCA => self.rlca(),
+            Instruction::RLA => self.rla(),
             Instruction::DAA => self.daa(),
             Instruction::SCF => self.scf(),
             Instruction::RRA => self.rra(),
+            Instruction::CCF => self.ccf(),
+            Instruction::RRCA => self.rrca(),
         };
 
         if self.state == CpuState::Stopped {
@@ -295,9 +300,14 @@ impl Cpu {
 
     fn handle_cb(&mut self, instruction: InstructionCB) -> usize {
         match instruction {
+            InstructionCB::RLC(source) => self.rlc(source),
+            InstructionCB::RRC(source) => self.rrc(source),
+            InstructionCB::RL(source) => self.rl(source),
+            InstructionCB::RR(source) => self.rr(source),
+            InstructionCB::SLA(source) => self.sla(source),
+            InstructionCB::SRA(source) => self.sra(source),
             InstructionCB::SWAP(source) => self.swap(source),
             InstructionCB::BIT(bit, target) => self.bit(bit, target),
-            InstructionCB::RR(source) => self.rr(source),
             InstructionCB::SRL(source) => self.srl(source),
             InstructionCB::RES(bit, target) => self.res(bit, target),
             InstructionCB::SET(bit, target) => self.set(bit, target),
@@ -427,7 +437,7 @@ impl Cpu {
         let result = match source {
             Operand::Register(register) => {
                 let data = self.get_register(register);
-                let result = ((data & 0b00001111) << 4) & (data >> 4);
+                let result = ((data & 0b00001111) << 4) | (data >> 4);
                 self.set_register(register, result);
                 result
             }
@@ -435,7 +445,7 @@ impl Cpu {
                 MemoryLocation::RegisterPair(pair) => {
                     let memory_pos = self.get_register_pair(pair);
                     let data = self.memory.read_byte(memory_pos);
-                    let result = ((data & 0b00001111) << 4) & (data >> 4);
+                    let result = ((data & 0b00001111) << 4) | (data >> 4);
                     self.memory.write_byte(memory_pos, result);
                     cycles = 4;
                     result
@@ -449,6 +459,106 @@ impl Cpu {
         self.flags.n = false;
         self.flags.h = false;
         self.flags.c = false;
+
+        cycles
+    }
+
+    fn rrc(&mut self, source: Operand) -> usize {
+        let mut cycles = 2;
+        let result = match source {
+            Operand::Register(register) => {
+                let data = self.get_register(register);
+                self.flags.c = data & 0x1 == 0x1;
+                let result = (data >> 1) | (self.flags.c as u8) << 7;
+                self.set_register(register, result);
+                result
+            }
+            Operand::MemoryLocation(location) => match location {
+                MemoryLocation::RegisterPair(pair) => {
+                    let memory_pos = self.get_register_pair(pair);
+                    let data = self.memory.read_byte(memory_pos);
+                    self.flags.c = data & 0x01 == 0x1;
+                    let result = (data >> 1) | (self.flags.c as u8) << 7;
+                    self.memory.write_byte(memory_pos, result);
+                    cycles = 4;
+                    result
+                }
+                _ => panic!("should not happen"),
+            },
+            _ => panic!("should not happen"),
+        };
+
+        self.flags.z = result == 0;
+        self.flags.n = false;
+        self.flags.h = false;
+
+        cycles
+    }
+
+    fn rlc(&mut self, source: Operand) -> usize {
+        let mut cycles = 2;
+        let result = match source {
+            Operand::Register(register) => {
+                let data = self.get_register(register);
+                self.flags.c = data >> 7 == 0x1;
+                let result = (data << 1) | self.flags.c as u8;
+                self.set_register(register, result);
+                result
+            }
+            Operand::MemoryLocation(location) => match location {
+                MemoryLocation::RegisterPair(pair) => {
+                    let memory_pos = self.get_register_pair(pair);
+                    let data = self.memory.read_byte(memory_pos);
+                    self.flags.c = data >> 7 == 0x1;
+                    let result = (data << 1) | self.flags.c as u8;
+                    self.memory.write_byte(memory_pos, result);
+                    cycles = 4;
+                    result
+                }
+                _ => panic!("should not happen"),
+            },
+            _ => panic!("should not happen"),
+        };
+
+        self.flags.z = result == 0;
+        self.flags.n = false;
+        self.flags.h = false;
+
+        cycles
+    }
+
+    fn rl(&mut self, source: Operand) -> usize {
+        let mut cycles = 2;
+        let result = match source {
+            Operand::Register(register) => {
+                let data = self.get_register(register);
+                let carry_prev = self.flags.c as u8;
+                self.flags.c = data >> 7 == 0x1;
+                let result = (data << 1) | carry_prev;
+                self.set_register(register, result);
+                result
+            }
+            Operand::MemoryLocation(location) => match location {
+                MemoryLocation::RegisterPair(pair) => {
+                    let memory_pos = self.get_register_pair(pair);
+                    let data = self.memory.read_byte(memory_pos);
+
+                    let carry_prev = self.flags.c as u8;
+                    self.flags.c = data >> 7 == 0x1;
+                    let result = (data << 1) | carry_prev;
+
+                    self.memory.write_byte(memory_pos, result);
+                    cycles = 4;
+                    result
+                }
+                _ => panic!("should not happen"),
+            },
+            _ => panic!("should not happen"),
+        };
+
+        self.flags.z = result == 0;
+        self.flags.n = false;
+        self.flags.h = false;
 
         cycles
     }
@@ -473,6 +583,70 @@ impl Cpu {
                     self.flags.c = data & 0x1 == 0x1;
                     let result = (data >> 1) | carry_prev << 7;
 
+                    self.memory.write_byte(memory_pos, result);
+                    cycles = 4;
+                    result
+                }
+                _ => panic!("should not happen"),
+            },
+            _ => panic!("should not happen"),
+        };
+
+        self.flags.z = result == 0;
+        self.flags.n = false;
+        self.flags.h = false;
+
+        cycles
+    }
+
+    fn sla(&mut self, source: Operand) -> usize {
+        let mut cycles = 2;
+        let result = match source {
+            Operand::Register(register) => {
+                let data = self.get_register(register);
+                self.flags.c = data >> 7 == 0x1;
+                let result = data << 1;
+                self.set_register(register, result);
+                result
+            }
+            Operand::MemoryLocation(location) => match location {
+                MemoryLocation::RegisterPair(pair) => {
+                    let memory_pos = self.get_register_pair(pair);
+                    let data = self.memory.read_byte(memory_pos);
+                    self.flags.c = data >> 7 == 0x1;
+                    let result = data << 1;
+                    self.memory.write_byte(memory_pos, result);
+                    cycles = 4;
+                    result
+                }
+                _ => panic!("should not happen"),
+            },
+            _ => panic!("should not happen"),
+        };
+
+        self.flags.z = result == 0;
+        self.flags.n = false;
+        self.flags.h = false;
+
+        cycles
+    }
+
+    fn sra(&mut self, source: Operand) -> usize {
+        let mut cycles = 2;
+        let result = match source {
+            Operand::Register(register) => {
+                let data = self.get_register(register);
+                self.flags.c = data & 0x1 == 0x1;
+                let result = data >> 1 | data & 0x80;
+                self.set_register(register, result);
+                result
+            }
+            Operand::MemoryLocation(location) => match location {
+                MemoryLocation::RegisterPair(pair) => {
+                    let memory_pos = self.get_register_pair(pair);
+                    let data = self.memory.read_byte(memory_pos);
+                    self.flags.c = data & 0x1 == 0x1;
+                    let result = data >> 1 | data & 0x80;
                     self.memory.write_byte(memory_pos, result);
                     cycles = 4;
                     result
@@ -716,7 +890,7 @@ impl Cpu {
                     self.set_register_pair(target, self.get_register_pair(source));
                     2
                 }
-                Operand::StackPointer => {
+                Operand::StackPointer(None) => {
                     self.sp = self.get_register_pair(source);
                     2
                 }
@@ -749,7 +923,7 @@ impl Cpu {
                     self.set_register_pair(target, operand);
                     3
                 }
-                Operand::StackPointer => {
+                Operand::StackPointer(None) => {
                     self.sp = operand;
                     3
                 }
@@ -758,10 +932,17 @@ impl Cpu {
                     panic!("not implemented")
                 }
             },
-            Operand::StackPointer => match load.target {
+            Operand::StackPointer(None) => match load.target {
                 Operand::ImmediateOperand(ImmediateOperand::A16(operand)) => {
                     self.memory.write_word(operand, self.sp);
                     5
+                }
+                _ => panic!("not implemented"),
+            },
+            Operand::StackPointer(Some(ImmediateOperand::S8(operand))) => match load.target {
+                Operand::RegisterPair(target) => {
+                    self.set_register_pair(target, (self.sp as i16 + operand as i16) as u16);
+                    3
                 }
                 _ => panic!("not implemented"),
             },
@@ -845,10 +1026,11 @@ impl Cpu {
                 _ => panic!("not implemented"),
             },
             Operand::ImmediateOperand(_) => panic!("not implemented"),
-            Operand::StackPointer => {
+            Operand::StackPointer(None) => {
                 self.sp = self.sp.wrapping_add(1);
                 cycles = 2;
             }
+            _ => panic!("not implemented"),
         }
 
         cycles
@@ -887,10 +1069,11 @@ impl Cpu {
                 _ => panic!("not implemented"),
             },
             Operand::ImmediateOperand(_) => panic!("not implemented"),
-            Operand::StackPointer => {
+            Operand::StackPointer(None) => {
                 self.sp = self.sp.wrapping_sub(1);
                 cycles = 2;
             }
+            _ => panic!("not implemented"),
         }
 
         cycles
@@ -910,7 +1093,7 @@ impl Cpu {
                 ImmediateOperand::D8(operand) => (operand, 2),
                 _ => panic!("Should not happen"),
             },
-            Operand::StackPointer => panic!("not implemented"),
+            Operand::StackPointer(_) => panic!("not implemented"),
         };
 
         self.a ^= source_data;
@@ -931,9 +1114,10 @@ impl Cpu {
                 }
                 _ => panic!("not implemented"),
             }, // 2 cycles
-            Operand::RegisterPair(_) => panic!("Should not happen"),
-            Operand::ImmediateOperand(_) => panic!("not implemented"),
-            Operand::StackPointer => panic!("not implemented"),
+            Operand::RegisterPair(_) => panic!("should not happen"),
+            Operand::ImmediateOperand(ImmediateOperand::D8(operand)) => (operand, 2),
+            Operand::StackPointer(_) => panic!("should not happen"),
+            _ => panic!("should not happen"),
         };
 
         self.a |= source_data;
@@ -954,12 +1138,12 @@ impl Cpu {
                 }
                 _ => panic!("should not happend"),
             },
-            Operand::RegisterPair(_) => panic!("Should not happen"),
+            Operand::RegisterPair(_) => panic!("should not happen"),
             Operand::ImmediateOperand(operand) => match operand {
                 ImmediateOperand::D8(operand) => (operand, 2),
                 _ => panic!("should not happend"),
             },
-            Operand::StackPointer => panic!("not implemented"),
+            Operand::StackPointer(_) => panic!("should not happen"),
         };
 
         self.a &= source_data;
@@ -1258,12 +1442,57 @@ impl Cpu {
         1
     }
 
+    fn rrca(&mut self) -> usize {
+        self.flags.h = false;
+        self.flags.z = false;
+        self.flags.n = false;
+
+        let mut byte = self.a;
+        self.flags.c = (byte & 0x1) == 0x1;
+        byte >>= 1;
+        if self.flags.c {
+            byte |= 0x80;
+        }
+        self.a = byte;
+
+        1
+    }
+
+    fn ccf(&mut self) -> usize {
+        self.flags.h = false;
+        self.flags.n = false;
+        self.flags.c = !self.flags.c;
+
+        1
+    }
+
+    fn rla(&mut self) -> usize {
+        self.flags.h = false;
+        self.flags.n = false;
+        self.flags.z = false;
+
+        let mut byte = self.a;
+        let carry = self.flags.c;
+        self.flags.c = (byte >> 7) == 0x1;
+        byte <<= 1;
+        if carry {
+            byte |= 0x1;
+        }
+        self.a = byte;
+
+        1
+    }
+
     /**
      * Shift A left, placing the leftmost bit (bit 7) in the carry flag and bit 0 of A.
      */
     fn rlca(&mut self) -> usize {
+        self.flags.h = false;
+        self.flags.n = false;
+        self.flags.z = false;
+
         let mut byte = self.a;
-        self.flags.c = (byte & 0xF) == 0x1;
+        self.flags.c = (byte >> 7) == 0x1;
         byte <<= 1;
         if self.flags.c {
             byte |= 0x01;
@@ -1272,6 +1501,8 @@ impl Cpu {
 
         1
     }
+
+
 
     fn jump(&mut self, operand: Operand, condition: Option<Condition>) -> usize {
         let mut cycles = 4;
@@ -1423,24 +1654,6 @@ impl Cpu {
         self.debug_video();
         self.debug_current_instruction();
     }
-
-    fn swap_memory(&mut self, pos: u16) {
-        let data = self.memory.read_byte(pos);
-
-        let upper = data & 0b11110000;
-        let lower = data & 0b00001111;
-
-        self.memory.write_byte(pos, upper | lower);
-    }
-
-    // fn swap_register(&mut self, reg: Register) {
-    //     let reg = self.get_register(reg);
-    //
-    //     let upper = *reg & 0b11110000;
-    //     let lower = *reg & 0b00001111;
-    //
-    //     *reg = upper | lower;
-    // }
 
     fn get_register(&self, reg: Register) -> u8 {
         match reg {

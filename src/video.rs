@@ -37,11 +37,17 @@ pub enum VideoMode {
 
 bitflags! {
     pub struct LcdStatus: u8 {
+        const HBLANK            =  0b00000000;
+        const VBLANK            =  0b00000001;
+        const OAM               =  0b00000010;
+        const VRAM_READ         =  0b00000011;
+        const ALL_MODE_FLAGS    =  0b00000011;
+
         const LYC               =  0b00000100;
         const HBLANK_INTERRUPT  =  0b00001000;
         const VBLANK_INTERRUPT  =  0b00010000;
         const OAM_INTERRUPT     =  0b00100000;
-        const LYC_INTERRUPT     =  0b00100000;
+        const LYC_INTERRUPT     =  0b01000000;
     }
 
     pub struct LcdControl: u8 {
@@ -62,7 +68,7 @@ impl Video {
             mode: VideoMode::OamRead,
             vram: Cursor::new(vec![0; SCREEN_BUFFER_SIZE]),
             mode_step: 0,
-            line: 0,
+            line: 0x91,
             lyc: 0,
             scy: 0,
             scx: 0,
@@ -93,12 +99,17 @@ impl Video {
                 if self.mode_step >= 80 {
                     self.mode_step = 0;
                     self.mode = VideoMode::VramRead;
+                    self.lcd_status -= LcdStatus::ALL_MODE_FLAGS;
+                    self.lcd_status |= LcdStatus::VRAM_READ;
                 }
             }
             VideoMode::VramRead => {
+                self.lcd_status |= LcdStatus::OAM;
                 if self.mode_step >= 172 {
                     self.mode_step = 0;
                     self.mode = VideoMode::HBlank;
+                    self.lcd_status -= LcdStatus::ALL_MODE_FLAGS;
+                    self.lcd_status |= LcdStatus::HBLANK;
                     self.lcd_status |= LcdStatus::HBLANK_INTERRUPT;
                 }
             }
@@ -107,13 +118,17 @@ impl Video {
                     self.mode_step = 0;
                     self.line += 1;
 
-                    if self.line == 143 {
+                    if self.line >= 143 {
                         self.mode = VideoMode::VBlank;
                         // set the lcd stat register and set the vblank interrupt
+                        self.lcd_status -= LcdStatus::ALL_MODE_FLAGS;
+                        self.lcd_status |= LcdStatus::VBLANK;
                         self.lcd_status |= LcdStatus::VBLANK_INTERRUPT;
-                        interrupt_flags &= InterruptFlags::VBLANK;
+                        interrupt_flags |= InterruptFlags::VBLANK;
                     } else {
                         self.mode = VideoMode::OamRead;
+                        self.lcd_status -= LcdStatus::ALL_MODE_FLAGS;
+                        self.lcd_status |= LcdStatus::OAM;
                         self.lcd_status |= LcdStatus::OAM_INTERRUPT;
                     }
                 }
@@ -126,6 +141,8 @@ impl Video {
                     if self.line > 153 {
                         self.mode = VideoMode::OamRead;
                         self.line = 0;
+                        self.lcd_status -= LcdStatus::ALL_MODE_FLAGS;
+                        self.lcd_status |= LcdStatus::OAM;
                         self.lcd_status |= LcdStatus::OAM_INTERRUPT;
                     }
                 }

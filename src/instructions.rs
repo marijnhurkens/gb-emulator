@@ -13,7 +13,7 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
                 0x01 => Operand::RegisterPair(RegisterPair(Register::B, Register::C)),
                 0x11 => Operand::RegisterPair(RegisterPair(Register::D, Register::E)),
                 0x21 => Operand::RegisterPair(RegisterPair(Register::H, Register::L)),
-                0x31 => Operand::StackPointer,
+                0x31 => Operand::StackPointer(None),
                 _ => panic!("Should not happend"),
             };
             let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
@@ -52,7 +52,7 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
                 0x03 => Operand::RegisterPair(RegisterPair(Register::B, Register::C)),
                 0x13 => Operand::RegisterPair(RegisterPair(Register::D, Register::E)),
                 0x23 => Operand::RegisterPair(RegisterPair(Register::H, Register::L)),
-                0x33 => Operand::StackPointer,
+                0x33 => Operand::StackPointer(None),
                 _ => panic!("Should not happend"),
             };
             (Instruction::INC(target), 1)
@@ -81,7 +81,7 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
             let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
             (
                 Instruction::LD(Load {
-                    source: Operand::StackPointer,
+                    source: Operand::StackPointer(None),
                     target: Operand::ImmediateOperand(ImmediateOperand::A16(operand)),
                 }),
                 3,
@@ -93,7 +93,7 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
                 0x09 => Operand::RegisterPair(RegisterPair(Register::B, Register::C)),
                 0x19 => Operand::RegisterPair(RegisterPair(Register::D, Register::E)),
                 0x29 => Operand::RegisterPair(RegisterPair(Register::H, Register::L)),
-                0x39 => Operand::StackPointer,
+                0x39 => Operand::StackPointer(None),
                 _ => panic!("Should not happend"),
             };
 
@@ -126,11 +126,13 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
                 0x0B => Operand::RegisterPair(RegisterPair(Register::B, Register::C)),
                 0x1B => Operand::RegisterPair(RegisterPair(Register::D, Register::E)),
                 0x2B => Operand::RegisterPair(RegisterPair(Register::H, Register::L)),
-                0x3B => Operand::StackPointer,
+                0x3B => Operand::StackPointer(None),
                 _ => panic!("Should not happend"),
             };
             (Instruction::DEC(target), 1)
         }
+        0x0F => (Instruction::RRCA, 1),
+        0x17 => (Instruction::RLA, 1),
         0x18 => {
             let operand = helpers::u8_to_i8(memory.read_byte(pc + 1));
             (Instruction::JR(ImmediateOperand::S8(operand), None), 2)
@@ -151,6 +153,7 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
                 2,
             )
         }
+        0x2F => (Instruction::CPL, 1),
         0x30 => {
             let operand = helpers::u8_to_i8(memory.read_byte(pc + 1));
             (
@@ -166,7 +169,7 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
                 2,
             )
         }
-        0x2F => (Instruction::CPL, 1),
+        0x3F => (Instruction::CCF, 1),
         0x76 => (Instruction::HALT, 1),
         0x40..=0x7F => {
             let target = int_to_register(((opcode - 0x40) & 0xf8) >> 3)
@@ -441,10 +444,27 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
             1,
         ),
         0xF3 => (Instruction::DI, 1),
+        0xF6 => {
+            let operand = memory.read_byte(pc + 1);
+            (
+                Instruction::OR(Operand::ImmediateOperand(ImmediateOperand::D8(operand))),
+                2,
+            )
+        }
+        0xF8 => {
+            let operand = helpers::u8_to_i8(memory.read_byte(pc + 1));
+            (
+                Instruction::LD(Load {
+                    source: Operand::StackPointer(Some(ImmediateOperand::S8(operand))),
+                    target: Operand::RegisterPair(RegisterPair(Register::H, Register::L)),
+                }),
+                2,
+            )
+        }
         0xF9 => (
             Instruction::LD(Load {
                 source: Operand::RegisterPair(RegisterPair(Register::H, Register::L)),
-                target: Operand::StackPointer,
+                target: Operand::StackPointer(None),
             }),
             1,
         ),
@@ -474,11 +494,38 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
 
 fn decode_cb(opcode: u8) -> InstructionCB {
     match opcode {
+        0x00..=0x07 => {
+            let source =
+                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+            InstructionCB::RLC(source)
+        }
+        0x08..=0x0F => {
+            let source =
+                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+            InstructionCB::RRC(source)
+        }
+        0x10..=0x17 => {
+            let source =
+                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+            InstructionCB::RL(source)
+        }
         0x18..=0x1f => {
             let source =
                 int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
 
             InstructionCB::RR(source)
+        }
+        0x20 ..= 0x27 => {
+            let source =
+                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+
+            InstructionCB::SLA(source)
+        }
+        0x28 ..= 0x2F => {
+            let source =
+                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+
+            InstructionCB::SRA(source)
         }
         0x30..=0x37 => {
             let source =
@@ -515,7 +562,6 @@ fn decode_cb(opcode: u8) -> InstructionCB {
 
             InstructionCB::SET(bit, target)
         }
-        _ => panic!("Unknown CB opcode 0xCB{:X}", opcode),
     }
 }
 
@@ -542,6 +588,7 @@ pub enum Instruction {
     CPL,
     DAA,
     SCF,
+    CCF,
     INC(Operand),
     DEC(Operand),
     ADD(Add),
@@ -565,6 +612,8 @@ pub enum Instruction {
     POP(RegisterPair),
     RST(u8),
     RLCA,
+    RRCA,
+    RLA,
     RRA,
 }
 
@@ -575,6 +624,7 @@ impl Display for Instruction {
             Instruction::HALT => write!(f, "HALT"),
             Instruction::DAA => write!(f, "DAA"),
             Instruction::SCF => write!(f, "SCF"),
+            Instruction::CCF => write!(f, "CCF"),
             Instruction::DEC(operand) => write!(f, "DEC {}", operand),
             Instruction::INC(operand) => write!(f, "INC {}", operand),
             Instruction::ADD(add) => write!(f, "ADD {}", add),
@@ -619,6 +669,8 @@ impl Display for Instruction {
             Instruction::EI => write!(f, "EI"),
             Instruction::CPL => write!(f, "CPL"),
             Instruction::RLCA => write!(f, "RLCA"),
+            Instruction::RLA => write!(f, "RLA"),
+            Instruction::RRCA => write!(f, "RRCA"),
             Instruction::CB(instruction) => write!(f, "{}", instruction),
             Instruction::RST(number) => write!(f, "RST {}", number),
             Instruction::PUSH(pair) => write!(f, "PUSH {}", pair),
@@ -630,8 +682,13 @@ impl Display for Instruction {
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum InstructionCB {
-    SWAP(Operand),
+    RLC(Operand),
+    RRC(Operand),
+    RL(Operand),
     RR(Operand),
+    SLA(Operand),
+    SRA(Operand),
+    SWAP(Operand),
     SRL(Operand),
     BIT(u8, Operand),
     RES(u8, Operand),
@@ -641,8 +698,13 @@ pub enum InstructionCB {
 impl Display for InstructionCB {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            InstructionCB::SWAP(operand) => write!(f, "SWAP {}", operand),
+            InstructionCB::RLC(operand) => write!(f, "RLC {}", operand),
+            InstructionCB::RRC(operand) => write!(f, "RRC {}", operand),
+            InstructionCB::RL(operand) => write!(f, "RL {}", operand),
             InstructionCB::RR(operand) => write!(f, "RR {}", operand),
+            InstructionCB::SLA(operand) => write!(f, "SLA {}", operand),
+            InstructionCB::SRA(operand) => write!(f, "SRA {}", operand),
+            InstructionCB::SWAP(operand) => write!(f, "SWAP {}", operand),
             InstructionCB::SRL(operand) => write!(f, "SRL {}", operand),
             InstructionCB::BIT(bit, operand) => write!(f, "BIT {}, {}", bit, operand),
             InstructionCB::RES(bit, operand) => write!(f, "RES {}, {}", bit, operand),
@@ -681,7 +743,7 @@ pub enum Operand {
     RegisterPair(RegisterPair),
     MemoryLocation(MemoryLocation),
     ImmediateOperand(ImmediateOperand),
-    StackPointer,
+    StackPointer(Option<ImmediateOperand>),
 }
 
 impl Display for Operand {
@@ -691,7 +753,13 @@ impl Display for Operand {
             Operand::MemoryLocation(memory) => write!(f, "{}", memory),
             Operand::ImmediateOperand(immediate_operand) => write!(f, "{}", immediate_operand),
             Operand::RegisterPair(register_pair) => write!(f, "{}", register_pair),
-            Operand::StackPointer => write!(f, "SP"),
+            Operand::StackPointer(immediate_operand) => {
+                if let Some(operand) = immediate_operand {
+                    write!(f, "SP+{}", operand)
+                } else {
+                    write!(f, "SP")
+                }
+            }
         }
     }
 }
