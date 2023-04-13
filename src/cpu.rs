@@ -883,6 +883,17 @@ impl Cpu {
                         _ => panic!("not implemented"),
                     }
                 }
+                MemoryLocation::Register(source_register) => {
+                    let memory_location = self.get_register(source_register);
+                    let data = self.memory.read_byte(u16::from_le_bytes([memory_location, 0xff]));
+                    match load.target {
+                        Operand::Register(register) => {
+                            self.set_register(register, data);
+                            2
+                        }
+                        _ => panic!("not implemented"),
+                    }
+                }
                 _ => panic!("not implemented"),
             },
             Operand::RegisterPair(source) => match load.target {
@@ -1316,9 +1327,23 @@ impl Cpu {
                 }
                 _ => panic!("not implemented"),
             },
+            Operand::StackPointer(None) => match add.target {
+                Operand::RegisterPair(target_pair) => {
+                    cycles = 2;
+                    let current_data = self.get_register_pair(target_pair) as u32;
+                    let source_data = self.sp as u32;
+                    let result = current_data.wrapping_add(source_data);
+
+                    self.flags.h =
+                        ((current_data & 0x0FFF) + (source_data & 0x0FFF)) & 0x01000 == 0x01000;
+                    self.flags.c = result > 0xFFFF;
+
+                    result
+                }
+                _ => panic!("not implemented"),
+            },
             _ => {
-                event!(Level::INFO, "{:#04X}", self.pc);
-                self.debug_all();
+
                 panic!("not implemented")
             }
         };
