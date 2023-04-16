@@ -104,6 +104,8 @@ impl Cpu {
         self.break_point = break_point;
         self.state = CpuState::Running;
 
+        self.log_doctor();
+
         loop {
             self.cycle(&screen_buffer);
         }
@@ -115,11 +117,11 @@ impl Cpu {
             panic!("PC out of bounds");
         }
 
+
         self.current_opcode = Some(self.memory.read_byte(self.pc));
         let (instruction, length) = decode(&mut self.memory, self.pc);
         self.current_instruction = Some(instruction);
 
-        self.log_doctor();
 
         event!(
             Level::DEBUG,
@@ -139,6 +141,7 @@ impl Cpu {
 
         let start_time = Instant::now();
         let t_cycles = self.process_instruction(instruction) * 4;
+        self.log_doctor();
 
         for _ in 0..t_cycles {
             self.memory.step();
@@ -152,7 +155,7 @@ impl Cpu {
                     && self
                         .memory
                         .interrupt_enable
-                        .intersects(InterruptFlags::VBLANK)
+                        .contains(InterruptFlags::VBLANK)
                 {
                     // Draw to screen
                     if let Some(buffer) = &screen_buffer {
@@ -173,32 +176,14 @@ impl Cpu {
                     self.pc = address;
                 }
 
-                if self.memory.interrupt_flags.contains(InterruptFlags::TIMER)
-                    && self
-                        .memory
-                        .interrupt_enable
-                        .intersects(InterruptFlags::TIMER)
-                {
-                    self.interrupts_enabled = false;
-                    let interrupt_flags =
-                        InterruptFlags::from_bits(self.memory.read_byte(0xFF0F)).unwrap();
-                    self.memory
-                        .write_byte(0xFF0F, (interrupt_flags - InterruptFlags::TIMER).bits());
-
-                    self.push_word(self.pc + 1);
-                    let address = 0x0050;
-                    event!(Level::INFO, "INT 50 TIMER | {:#08X}", address);
-                    self.pc = address;
-                }
-
                 if self
                     .memory
                     .interrupt_flags
                     .contains(InterruptFlags::LCD_STAT)
                     && self
-                        .memory
-                        .interrupt_enable
-                        .intersects(InterruptFlags::LCD_STAT)
+                    .memory
+                    .interrupt_enable
+                    .contains(InterruptFlags::LCD_STAT)
                 {
                     self.interrupts_enabled = false;
                     let interrupt_flags =
@@ -209,6 +194,24 @@ impl Cpu {
                     self.push_word(self.pc + 1);
                     let address = 0x0048;
                     event!(Level::INFO, "INT 48 STAT | {:#08X}", address);
+                    self.pc = address;
+                }
+
+                if self.memory.interrupt_flags.contains(InterruptFlags::TIMER)
+                    && self
+                        .memory
+                        .interrupt_enable
+                        .contains(InterruptFlags::TIMER)
+                {
+                    self.interrupts_enabled = false;
+                    let interrupt_flags =
+                        InterruptFlags::from_bits(self.memory.read_byte(0xFF0F)).unwrap();
+                    self.memory
+                        .write_byte(0xFF0F, (interrupt_flags - InterruptFlags::TIMER).bits());
+
+                    self.push_word(self.pc + 1);
+                    let address = 0x0050;
+                    event!(Level::INFO, "INT 50 TIMER | {:#08X}", address);
                     self.pc = address;
                 }
             }
@@ -894,7 +897,6 @@ impl Cpu {
                         _ => panic!("not implemented"),
                     }
                 }
-                _ => panic!("not implemented"),
             },
             Operand::RegisterPair(source) => match load.target {
                 Operand::RegisterPair(target) => {
@@ -952,6 +954,11 @@ impl Cpu {
             },
             Operand::StackPointer(Some(ImmediateOperand::S8(operand))) => match load.target {
                 Operand::RegisterPair(target) => {
+                    self.flags.z = false;
+                    self.flags.n = false;
+                    self.flags.c = (self.sp & 0xFF) + (operand as i16 as u16 & 0xFF) > 0xFF;
+                    self.flags.h = (self.sp & 0xF) + (operand as i16 as u16 & 0xF) > 0xF;
+
                     self.set_register_pair(target, (self.sp as i16 + operand as i16) as u16);
                     3
                 }
@@ -1248,19 +1255,6 @@ impl Cpu {
         cycles
     }
 
-    /**
-     * Add register to HL
-     */
-    // fn add_to_reg_hl(&mut self, b: [u8; 2]) {
-    //     let hl_u16 = u16::from_le_bytes(self.hl);
-    //     let b_u16 = u16::from_le_bytes(b);
-    //     let temp = hl_u16 as u32 + b_u16 as u32;
-    //     self.flags.n = false;
-    //     self.flags.c = temp > 0xFFFF;
-    //     self.flags.h = ((hl_u16 & 0xFFF) + (b_u16 & 0xFFF)) > 0xFFF;
-    //     self.hl = ((temp & 0xFFFF) as u16).to_le_bytes();
-    // }
-
     /** add bye to register a */
     fn add(&mut self, add: Add) -> usize {
         let mut cycles = 1;
@@ -1279,6 +1273,19 @@ impl Cpu {
                     }
                     _ => panic!("not implemented"),
                 },
+                ImmediateOperand::S8(source_operand) => match add.target {
+                    Operand::StackPointer(None) => {
+                        cycles = 4;
+                        let source_operand = source_operand as i16 as u32;
+
+                        self.flags.z = false;
+                        self.flags.c = ((self.sp as u32 & 0xFF) + (source_operand & 0xFF)) > 0xFF;
+                        self.flags.h = ((self.sp as u32 & 0xF) + (source_operand & 0xF)) > 0xF;
+
+                        (self.sp as u32).wrapping_add(source_operand)
+                    },
+                    _ => panic!("not implemented"),
+                }
                 _ => panic!("not implemented"),
             },
             Operand::Register(source_register) => match add.target {
@@ -1354,6 +1361,9 @@ impl Cpu {
             }
             Operand::RegisterPair(target_pair) => {
                 self.set_register_pair(target_pair, (result & 0xFFFF) as u16);
+            }
+            Operand::StackPointer(None) => {
+                self.sp = result as u16;
             }
             _ => panic!("should not happen"),
         }

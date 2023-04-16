@@ -6,8 +6,8 @@ use byteorder::{ReadBytesExt, WriteBytesExt};
 use tracing::{event, Level};
 
 use crate::cpu::CPU_FREQ;
-use crate::SCREEN_BUFFER_SIZE;
 use crate::video::{LcdControl, LcdStatus, Video};
+use crate::SCREEN_BUFFER_SIZE;
 
 const MEM_SIZE: usize = 1024 * 128;
 const VRAM_START: u16 = 0x8000;
@@ -69,7 +69,7 @@ impl Memory {
             tima_step: 0,
             tima: 0,
             tma: 0,
-            tac: TimerControl::TIMER_ENABLE,
+            tac: TimerControl::empty(),
             buttons: 0b11110000,
             bcps: 0,
             bcpd: 0,
@@ -166,7 +166,7 @@ impl Memory {
             0xFF68 => self.write_bcps_palette(byte),
             0xFF69 => self.write_bcpd_palette(byte),
             0xFF7F..=0xFFFE => self.write_byte_to_storage(pos, byte), // high ram
-            0xFFFF => self.interrupt_enable = InterruptFlags::from_bits(byte).unwrap(),
+            0xFFFF => self.write_interrupt_enable(byte),
             _ => panic!(
                 "Unimplemented memory write to addr {:#04X} -> {:#04X}",
                 pos, byte
@@ -176,8 +176,15 @@ impl Memory {
 
     fn write_interrupt_flags(&mut self, byte: u8) {
         self.interrupt_flags = InterruptFlags::from_bits(byte).unwrap_or_else(|| {
-            event!(Level::WARN, "Wrong IF write: {:#08b}", byte);
+            event!(Level::ERROR, "Wrong IF write: {:#08b}", byte);
             self.interrupt_flags
+        });
+    }
+
+    fn write_interrupt_enable(&mut self, byte: u8) {
+        self.interrupt_enable = InterruptFlags::from_bits(byte).unwrap_or_else(|| {
+            event!(Level::ERROR, "Wrong IE write: {:#08b}", byte);
+            self.interrupt_enable
         });
     }
 
@@ -218,8 +225,8 @@ impl Memory {
             0xFF42 => self.video.scy,
             0xFF43 => self.video.scx,
             0xFF44 => {
-                // self.video.line // LY, LCD y coordinate
-                0x90
+                self.video.line // LY, LCD y coordinate
+                // 0x90
             }
             0xFF45 => {
                 unimplemented!()
@@ -314,10 +321,14 @@ impl Memory {
         }
     }
 
-    pub fn handle_serial(&mut self)
-    {
+    pub fn handle_serial(&mut self) {
         if self.sc.contains(SerialControl::TRANSFER_START) {
-            println!("{}", self.sb.as_char().unwrap());
+            let char = self.sb.as_char().unwrap();
+            if char == '\n' {
+                println!();
+            } else {
+                print!("{}", char);
+            }
             self.sc -= SerialControl::TRANSFER_START;
         }
     }

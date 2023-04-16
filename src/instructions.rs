@@ -398,6 +398,16 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
             ))),
             2,
         ),
+        0xE8 => {
+            let operand = helpers::u8_to_i8(memory.read_byte(pc + 1));
+            (
+                Instruction::ADD(Add {
+                    source: Operand::ImmediateOperand(ImmediateOperand::S8(operand)),
+                    target: Operand::StackPointer(None),
+                }),
+                2,
+            )
+        }
         0xE9 => (
             Instruction::JP(
                 Operand::RegisterPair(RegisterPair(Register::H, Register::L)),
@@ -515,13 +525,13 @@ fn decode_cb(opcode: u8) -> InstructionCB {
 
             InstructionCB::RR(source)
         }
-        0x20 ..= 0x27 => {
+        0x20..=0x27 => {
             let source =
                 int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
 
             InstructionCB::SLA(source)
         }
-        0x28 ..= 0x2F => {
+        0x28..=0x2F => {
             let source =
                 int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
 
