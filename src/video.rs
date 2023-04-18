@@ -1,14 +1,21 @@
-use std::io::Cursor;
+use std::io::{Cursor, Read, Write};
 
 use bitflags::bitflags;
+use byteorder::{ReadBytesExt, WriteBytesExt};
 
 use crate::memory::InterruptFlags;
-use crate::SCREEN_BUFFER_SIZE;
+use crate::{SCREEN_BUFFER_SIZE, SCREEN_WIDTH};
+
+pub const VRAM_START: u16 = 0x8000;
+const VRAM_SIZE: usize = 0xA000 - 0x8000;
+const BACKGROUND_ADDRESS: usize = 0x9800;
+const WINDOW_ADDRESS: usize = 0x9C00;
 
 #[derive(Debug)]
 pub struct Video {
     mode_step: usize,
     pub vram: Cursor<Vec<u8>>,
+    pub screen_buffer: Cursor<Vec<u8>>,
     pub line: u8,
     pub lyc: u8,
     pub scy: u8,
@@ -66,7 +73,8 @@ impl Video {
     pub fn new() -> Self {
         Self {
             mode: VideoMode::OamRead,
-            vram: Cursor::new(vec![0; SCREEN_BUFFER_SIZE]),
+            vram: Cursor::new(vec![0; VRAM_SIZE]),
+            screen_buffer: Cursor::new(vec![0; SCREEN_BUFFER_SIZE]),
             mode_step: 0,
             line: 0x91,
             lyc: 0,
@@ -101,6 +109,7 @@ impl Video {
                     self.mode = VideoMode::VramRead;
                     self.lcd_status -= LcdStatus::ALL_MODE_FLAGS;
                     self.lcd_status |= LcdStatus::VRAM_READ;
+                    self.draw_line();
                 }
             }
             VideoMode::VramRead => {
@@ -161,4 +170,63 @@ impl Video {
 
         return interrupt_flags;
     }
+
+    pub fn read_screen_buffer(&mut self) -> [u8; SCREEN_BUFFER_SIZE] {
+        self.screen_buffer.set_position(0);
+        let mut buffer = [0; SCREEN_BUFFER_SIZE];
+        self.screen_buffer.read_exact(&mut buffer).unwrap();
+
+        buffer
+    }
+
+    pub fn read_byte(&mut self, pos: u16) -> u8 {
+        self.vram.set_position((pos - VRAM_START) as u64);
+        self.vram.read_u8().unwrap()
+    }
+
+    pub fn write_byte(&mut self, pos: u16, byte: u8) {
+        self.vram.set_position((pos - VRAM_START) as u64);
+        self.vram.write_u8(byte).unwrap();
+    }
+
+    fn draw_line(&mut self) {
+        self.draw_tiles();
+    }
+
+    fn draw_tiles(&mut self) {
+        for x in 0..127 {
+            let tile = self.get_tile(x);
+            let anchor_x = (x * 8) % SCREEN_WIDTH as u64;
+            let anchor_y = (x * 8) / SCREEN_WIDTH as u64;
+            tile.chunks(8).enumerate().for_each(|(i,row)| {
+                let y = anchor_y + i as u64;
+                self.screen_buffer.set_position(y * SCREEN_WIDTH as u64 + anchor_x);
+                let _ = self.screen_buffer.write(row).unwrap();
+            })
+        }
+    }
+
+    fn get_tile(&mut self, number: u64) -> Tile {
+        self.vram.set_position(number * 16);
+        let mut data: [u8; 16] = [0; 16];
+        self.vram.read_exact(&mut data).unwrap();
+
+        let pixels: [u8; 8 * 8] = data
+            .chunks(2)
+            .flat_map(|chunk| {
+                let mut pixels: [u8; 8] = [0; 8];
+                for i in &mut pixels {
+                    *i = (chunk[0] & 0x1 << (7 - *i)) + (chunk[1] & 0x1 << (7 - *i));
+                }
+
+                pixels
+            })
+            .collect::<Vec<u8>>()
+            .try_into()
+            .unwrap();
+
+        pixels
+    }
 }
+
+type Tile = [u8; 8 * 8];

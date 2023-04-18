@@ -317,6 +317,10 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
                 3,
             )
         }
+        0xCD => {
+            let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
+            (Instruction::Call(ImmediateOperand::A16(operand), None), 3)
+        }
         0xCE => (
             Instruction::ADC(Operand::ImmediateOperand(ImmediateOperand::D8(
                 memory.read_byte(pc + 1),
@@ -359,10 +363,6 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
             ))),
             2,
         ),
-        0xCD => {
-            let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
-            (Instruction::Call(ImmediateOperand::A16(operand), None), 3)
-        }
         0xD0 => (Instruction::RET(Some(Condition::NC)), 1),
         0xD8 => (Instruction::RET(Some(Condition::C)), 1),
         0xD9 => (Instruction::RETI, 1),

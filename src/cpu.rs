@@ -160,7 +160,7 @@ impl Cpu {
                     // Draw to screen
                     if let Some(buffer) = &screen_buffer {
                         let mut guard = buffer.lock().unwrap();
-                        (*guard) = self.memory.read_vram();
+                        (*guard) = self.memory.video.read_screen_buffer();
                         drop(guard);
                     }
 
@@ -170,7 +170,7 @@ impl Cpu {
                     self.memory
                         .write_byte(0xFF0F, (interrupt_flags - InterruptFlags::VBLANK).bits());
 
-                    self.push_word(self.pc + 1);
+                    self.push_word(self.pc);
                     let address = 0x0040;
                     event!(Level::INFO, "INT 40 VBLANK | {:#08X}", address);
                     self.pc = address;
@@ -191,7 +191,7 @@ impl Cpu {
                     self.memory
                         .write_byte(0xFF0F, (interrupt_flags - InterruptFlags::LCD_STAT).bits());
 
-                    self.push_word(self.pc + 1);
+                    self.push_word(self.pc);
                     let address = 0x0048;
                     event!(Level::INFO, "INT 48 STAT | {:#08X}", address);
                     self.pc = address;
@@ -209,7 +209,7 @@ impl Cpu {
                     self.memory
                         .write_byte(0xFF0F, (interrupt_flags - InterruptFlags::TIMER).bits());
 
-                    self.push_word(self.pc + 1);
+                    self.push_word(self.pc);
                     let address = 0x0050;
                     event!(Level::INFO, "INT 50 TIMER | {:#08X}", address);
                     self.pc = address;

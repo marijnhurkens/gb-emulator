@@ -6,11 +6,10 @@ use byteorder::{ReadBytesExt, WriteBytesExt};
 use tracing::{event, Level};
 
 use crate::cpu::CPU_FREQ;
-use crate::video::{LcdControl, LcdStatus, Video};
-use crate::SCREEN_BUFFER_SIZE;
+use crate::video::{LcdControl, LcdStatus, Video, VRAM_START};
+
 
 const MEM_SIZE: usize = 1024 * 128;
-const VRAM_START: u16 = 0x8000;
 const DIVIDER_REG_CYCLES_PER_STEP: u32 = ((16_384.0 / CPU_FREQ) * CPU_FREQ) as u32;
 
 bitflags! {
@@ -70,7 +69,7 @@ impl Memory {
             tima: 0,
             tma: 0,
             tac: TimerControl::empty(),
-            buttons: 0b11110000,
+            buttons: 0xFF,
             bcps: 0,
             bcpd: 0,
             sb: 0,
@@ -88,7 +87,7 @@ impl Memory {
                 // Switchable memory bank 01..max, todo
                 self.read_byte_from_rom(pos)
             }
-            VRAM_START..=0x9FFF => self.read_byte_from_vram(pos - VRAM_START),
+            VRAM_START..=0x9FFF => self.video.read_byte(pos),
             0xA000..=0xBFFF => self.read_byte_from_storage(pos),
             0xC000..=0xCFFF => self.read_byte_from_storage(pos),
             0xD000..=0xDFFF => self.read_byte_from_storage(pos),
@@ -112,14 +111,6 @@ impl Memory {
         res
     }
 
-    pub fn read_vram(&mut self) -> [u8; SCREEN_BUFFER_SIZE] {
-        self.video.vram.set_position(0);
-        let mut buffer = [0; SCREEN_BUFFER_SIZE];
-        self.video.vram.read_exact(&mut buffer).unwrap();
-
-        buffer
-    }
-
     fn read_byte_from_storage(&mut self, pos: u16) -> u8 {
         self.storage.set_position(pos as u64);
         self.storage.read_u8().unwrap()
@@ -127,21 +118,6 @@ impl Memory {
 
     fn read_byte_from_rom(&self, pos: u16) -> u8 {
         self.rom[pos as usize]
-    }
-
-    fn read_byte_from_vram(&mut self, pos: u16) -> u8 {
-        self.video.vram.set_position(pos as u64);
-        self.video.vram.read_u8().unwrap()
-    }
-
-    fn write_byte_to_vram(&mut self, pos: u16, byte: u8) {
-        // print!(
-        //     "write byte vram {:#08X} -> {:#04X} | ",
-        //     pos + VRAM_START,
-        //     byte
-        // );
-        self.video.vram.set_position(pos as u64);
-        self.video.vram.write_u8(byte).unwrap();
     }
 
     pub fn write_byte(&mut self, pos: u16, byte: u8) {
@@ -153,7 +129,7 @@ impl Memory {
         );
         match pos {
             0x0000..=0x7FFF => (), //self.write_byte_to_storage(pos, byte), //print!("write rom, not implemented |"),
-            0x8000..=0x9FFF => self.write_byte_to_vram(pos - VRAM_START, byte),
+            0x8000..=0x9FFF => self.video.write_byte(pos, byte),
             0xA000..=0xBFFF => self.write_byte_to_storage(pos, byte), // ??
             0xC000..=0xDFFF => self.write_byte_to_storage(pos, byte), // wram
             0xE000..=0xFDFF => self.write_byte_to_storage(pos - 0x2000, byte), //echo ram
