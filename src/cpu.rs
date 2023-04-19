@@ -3,7 +3,7 @@ use std::ops::Sub;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use bitvec::macros::internal::funty::Fundamental;
+use bitvec::macros::internal::funty::{Fundamental, Integral};
 use tracing::{event, Level};
 
 use crate::cartridge::Cartridge;
@@ -755,14 +755,14 @@ impl Cpu {
 
         match target {
             Operand::Register(target) => {
-                self.set_register(target, self.get_register(target) & (0x1 << bit));
+                self.set_register(target, self.get_register(target) | (0x1 << bit));
             }
 
             Operand::MemoryLocation(location) => match location {
                 MemoryLocation::RegisterPair(pair) => {
                     let memory_pos = self.get_register_pair(pair);
                     let data = self.memory.read_byte(memory_pos);
-                    self.memory.write_byte(memory_pos, data & (0x1 << bit));
+                    self.memory.write_byte(memory_pos, data | (0x1 << bit));
 
                     cycles = 4;
                 }
@@ -1032,12 +1032,13 @@ impl Cpu {
             Operand::MemoryLocation(location) => match location {
                 MemoryLocation::RegisterPair(pair) => {
                     let pos = self.get_register_pair(pair);
-                    let byte = self.memory.read_byte(pos).wrapping_add(1);
-                    self.memory.write_byte(pos, byte);
+                    let byte = self.memory.read_byte(pos);
+                    let result = byte.wrapping_add(1);
+                    self.memory.write_byte(pos, result);
 
-                    self.flags.z = byte == 0;
+                    self.flags.z = result == 0;
                     self.flags.n = false;
-                    self.flags.h = (byte & 0xF) == 0xF;
+                    self.flags.h = ((byte & 0x0F) + 0x1) & 0x10 == 0x10;
 
                     cycles = 3;
                 }
@@ -1444,6 +1445,11 @@ impl Cpu {
             Operand::ImmediateOperand(ImmediateOperand::D8(operand)) => {
                 cycles = 2;
                 operand
+            }
+            Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
+                cycles = 2;
+                let pos = self.get_register_pair(pair);
+                self.memory.read_byte(pos)
             }
             _ => panic!("not implemented"),
         };

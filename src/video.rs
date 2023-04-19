@@ -4,17 +4,29 @@ use bitflags::bitflags;
 use byteorder::{ReadBytesExt, WriteBytesExt};
 
 use crate::memory::InterruptFlags;
-use crate::{SCREEN_BUFFER_SIZE, SCREEN_WIDTH};
+use crate::{helpers, SCREEN_BUFFER_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 pub const VRAM_START: u16 = 0x8000;
-const VRAM_SIZE: usize = 0xA000 - 0x8000;
-const BACKGROUND_ADDRESS: usize = 0x9800;
-const WINDOW_ADDRESS: usize = 0x9C00;
+const VRAM_END: u16 = 0xA000;
+const VRAM_SIZE: u16 = VRAM_END+1 - VRAM_START;
+
+const OAM_START: u16 = 0xFE00;
+const OAM_END: u16 = 0xFE9F;
+const OAM_SIZE: u16 = OAM_END+1 - OAM_START;
+
+const BACKGROUND_MAP_START: u16 = 0x9800;
+const BACKGROUND_MAP_END: u16 = 0x9BFF;
+const BACKGROUND_MAP_SIZE: u16 = BACKGROUND_MAP_END + 1 - BACKGROUND_MAP_START;
+const WINDOW_MAP_START: u16 = 0x9C00;
+const WINDOW_MAP_END: u16 = 0x9FFF;
+const WINDOW_MAP_SIZE: u16 = WINDOW_MAP_END + 1 - WINDOW_MAP_START;
+
 
 #[derive(Debug)]
 pub struct Video {
     mode_step: usize,
     pub vram: Cursor<Vec<u8>>,
+    pub oam: Cursor<Vec<u8>>,
     pub screen_buffer: Cursor<Vec<u8>>,
     pub line: u8,
     pub lyc: u8,
@@ -67,13 +79,21 @@ bitflags! {
         const OBJ_ENABLE =              0b00000010;
         const WINDOW_BG_DISPLAY =       0b00000001;
     }
+
+    pub struct ObjectAttributes: u8 {
+        const BG_WINDOW_OVER_OBJ    = 0b10000000;
+        const Y_FLIP                = 0b01000000;
+        const X_FLIP                = 0b00100000;
+        const PALETTE               = 0b00010000;
+    }
 }
 
 impl Video {
     pub fn new() -> Self {
         Self {
             mode: VideoMode::OamRead,
-            vram: Cursor::new(vec![0; VRAM_SIZE]),
+            vram: Cursor::new(vec![0; VRAM_SIZE as usize]),
+            oam: Cursor::new(vec![0; OAM_SIZE as usize]),
             screen_buffer: Cursor::new(vec![0; SCREEN_BUFFER_SIZE]),
             mode_step: 0,
             line: 0x91,
@@ -189,34 +209,148 @@ impl Video {
         self.vram.write_u8(byte).unwrap();
     }
 
+    pub fn read_byte_oam(&mut self, pos: u16) -> u8 {
+        self.oam.set_position((pos - OAM_START) as u64);
+        self.oam.read_u8().unwrap()
+    }
+
+    pub fn write_byte_oam(&mut self, pos: u16, byte: u8) {
+        self.oam.set_position((pos - OAM_START) as u64);
+        self.oam.write_u8(byte).unwrap();
+    }
+
+    pub fn write_oam_transfer(&mut self, buf: &[u8]) {
+        self.oam.set_position(0);
+        self.oam.write_all(buf).unwrap();
+    }
+
     fn draw_line(&mut self) {
-        self.draw_tiles();
+         // self.draw_background();
+         //  self.draw_window();
+         self.draw_oam();
+        // self.draw_tiles();
+    }
+
+    fn draw_oam(&mut self) {
+        let mut data = [0; OAM_SIZE as usize];
+        self.oam.set_position(0);
+        self.oam.read_exact(&mut data).unwrap();
+
+        data.chunks(4).for_each(|object| {
+            let y_position = object[0] as i64 - 16;
+            let x_position = object[1] as i64 - 8;
+            let attributes = ObjectAttributes::from_bits(object[3]);
+
+
+            if self.lcd_control.contains(LcdControl::OBJ_SIZE) {
+                let tile1 = self.get_tile(object[2] & 0xFE, false);
+                let tile2 = self.get_tile(object[2] & 0x01, false);
+
+                self.draw_tile(tile1, x_position, y_position);
+                self.draw_tile(tile2, x_position, y_position + 8);
+            } else {
+                let tile = self.get_tile(object[2], false);
+
+                self.draw_tile(tile, x_position, y_position);
+            };
+        });
+    }
+
+    fn draw_background(&mut self) {
+        self.vram
+            .set_position((BACKGROUND_MAP_START - VRAM_START) as u64);
+        let mut tile_map = [0; BACKGROUND_MAP_SIZE as usize];
+        self.vram.read_exact(&mut tile_map).unwrap();
+
+        tile_map.iter().enumerate().for_each(|(i, tile_index)| {
+            let tile = self.get_tile(
+                *tile_index,
+                !self.lcd_control.contains(LcdControl::WINDOW_BG_ADDRES_MODE),
+            );
+            let anchor_x = (i as u64 % 32) * 8;
+            let anchor_y = (i as u64 / 32) * 8;
+
+            if anchor_x > SCREEN_WIDTH as u64 || anchor_y > SCREEN_HEIGHT as u64 {
+                return;
+            }
+
+            self.draw_tile(tile, anchor_x as i64, anchor_y as i64);
+        });
+    }
+
+    fn draw_window(&mut self) {
+        self.vram
+            .set_position((WINDOW_MAP_START - VRAM_START) as u64);
+        let mut tile_map = [0; WINDOW_MAP_SIZE as usize];
+        self.vram.read_exact(&mut tile_map).unwrap();
+
+        tile_map.iter().enumerate().for_each(|(i, tile_index)| {
+            let tile = self.get_tile(
+                *tile_index,
+                !self.lcd_control.contains(LcdControl::WINDOW_BG_ADDRES_MODE),
+            );
+            let anchor_x = (i as u64 % 32) * 8;
+            let anchor_y = (i as u64 / 32) * 8;
+
+            if anchor_x > SCREEN_WIDTH as u64 || anchor_y > SCREEN_HEIGHT as u64 {
+                return;
+            }
+
+            self.draw_tile(tile, anchor_x as i64, anchor_y as i64);
+        });
     }
 
     fn draw_tiles(&mut self) {
-        for x in 0..127 {
-            let tile = self.get_tile(x);
-            let anchor_x = (x * 8) % SCREEN_WIDTH as u64;
-            let anchor_y = (x * 8) / SCREEN_WIDTH as u64;
-            tile.chunks(8).enumerate().for_each(|(i,row)| {
-                let y = anchor_y + i as u64;
-                self.screen_buffer.set_position(y * SCREEN_WIDTH as u64 + anchor_x);
-                let _ = self.screen_buffer.write(row).unwrap();
-            })
+        for x in 0u64..=384 {
+            let tile = self.get_tile(x as u8, false);
+            let anchor_x = (x % (SCREEN_WIDTH as u64 / 8)) * 8;
+            let anchor_y = (x / (SCREEN_WIDTH as u64 / 8)) * 8;
+            self.draw_tile(tile, anchor_x as i64, anchor_y as i64);
         }
     }
 
-    fn get_tile(&mut self, number: u64) -> Tile {
-        self.vram.set_position(number * 16);
-        let mut data: [u8; 16] = [0; 16];
+    fn draw_tile(&mut self, tile: Tile, anchor_x: i64, anchor_y: i64) {
+        if anchor_x <= -8 || anchor_y < -8 {
+            return;
+        }
+
+        tile.chunks(8).skip(anchor_y.min(0).abs() as usize).enumerate().for_each(|(i, row)| {
+            let y = anchor_y as u64 + i as u64;
+            self.screen_buffer
+                .set_position(y * SCREEN_WIDTH as u64 + anchor_x.max(0) as u64);
+            let row_scaled: [u8; 8] = row
+                .iter()
+                .skip(anchor_x.min(0).abs() as usize)
+                .map(|f| f * 60)
+                .collect::<Vec<u8>>()
+                .try_into()
+                .unwrap();
+            let _ = self.screen_buffer.write(&row_scaled).unwrap();
+        })
+    }
+
+    fn get_tile(&mut self, number: u8, signed: bool) -> Tile {
+        let pos = if signed {
+            (0x9000 + (helpers::u8_to_i8(number) as u64 * 16)) - VRAM_START as u64
+        } else {
+            0x8000 + (number as u64 * 16) - VRAM_START as u64
+        };
+
+        self.vram.set_position(pos);
+        let mut data = [0; 16];
         self.vram.read_exact(&mut data).unwrap();
 
-        let pixels: [u8; 8 * 8] = data
+        let pixels: Tile = data
             .chunks(2)
             .flat_map(|chunk| {
                 let mut pixels: [u8; 8] = [0; 8];
-                for i in &mut pixels {
-                    *i = (chunk[0] & 0x1 << (7 - *i)) + (chunk[1] & 0x1 << (7 - *i));
+                for (i, pixel) in pixels.iter_mut().enumerate() {
+                    // get the nth bit from both bytes
+                    let least = (chunk[0] >> (7 - i)) & 0x1;
+                    let most = (chunk[1] >> (7 - i)) & 0x1;
+
+                    // combine, first bit is the least significant bit and the second the most significant
+                    *pixel = least + (most << 1);
                 }
 
                 pixels

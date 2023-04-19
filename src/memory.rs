@@ -92,7 +92,7 @@ impl Memory {
             0xC000..=0xCFFF => self.read_byte_from_storage(pos),
             0xD000..=0xDFFF => self.read_byte_from_storage(pos),
             0xE000..=0xFDFF => self.read_byte_from_storage(pos - 0x2000),
-            0xFE00..=0xFE9F => self.read_byte_from_storage(pos), // todo implement oam
+            0xFE00..=0xFE9F => self.video.read_byte_oam(pos),
             0xFF00..=0xFF07 => self.read_io_register(pos),
             0xFF0F => self.interrupt_flags.bits,
             0xFF10..=0xFF7F => self.read_io_register(pos),
@@ -129,11 +129,11 @@ impl Memory {
         );
         match pos {
             0x0000..=0x7FFF => (), //self.write_byte_to_storage(pos, byte), //print!("write rom, not implemented |"),
-            0x8000..=0x9FFF => self.video.write_byte(pos, byte),
+            VRAM_START..=0x9FFF => self.video.write_byte(pos, byte),
             0xA000..=0xBFFF => self.write_byte_to_storage(pos, byte), // ??
             0xC000..=0xDFFF => self.write_byte_to_storage(pos, byte), // wram
             0xE000..=0xFDFF => self.write_byte_to_storage(pos - 0x2000, byte), //echo ram
-            0xFE00..=0xFE9F => self.write_byte_to_storage(pos, byte), // sprite attr table
+            0xFE00..=0xFE9F => self.video.write_byte_oam(pos, byte),
             0xFEA0..=0xFEFF => self.write_byte_to_storage(pos, byte), // not usable
             0xFF00..=0xFF07 => self.write_io_register(pos, byte),
             0xFF0F => self.write_interrupt_flags(byte),
@@ -252,13 +252,13 @@ impl Memory {
 
     fn oam_transfer(&mut self, byte: u8) {
         let source_start = (byte as u16) << 8;
+        println!("OAM TRANSFER: {:#06X}", source_start);
         let mut buf = [0_u8; 0x9f];
 
         self.storage.set_position(source_start as u64);
         self.storage.read_exact(&mut buf).unwrap();
 
-        self.storage.set_position(0xfe00_u64);
-        self.storage.write_all(&buf).unwrap();
+        self.video.write_oam_transfer(&buf);
 
         // todo: implement 160 machine cycles
     }
