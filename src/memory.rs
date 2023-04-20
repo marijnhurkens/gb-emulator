@@ -1,7 +1,7 @@
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Read};
 
 use bitflags::bitflags;
-use bitvec::macros::internal::funty::Fundamental;
+use bitvec::macros::internal::funty::{Fundamental};
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use tracing::{event, Level};
 
@@ -106,8 +106,6 @@ impl Memory {
             }
         };
 
-        //print!("read byte {:#08X} -> {:#04X} | ", pos, res);
-
         res
     }
 
@@ -153,14 +151,14 @@ impl Memory {
     fn write_interrupt_flags(&mut self, byte: u8) {
         self.interrupt_flags = InterruptFlags::from_bits(byte).unwrap_or_else(|| {
             event!(Level::ERROR, "Wrong IF write: {:#08b}", byte);
-            self.interrupt_flags
+            panic!();
         });
     }
 
     fn write_interrupt_enable(&mut self, byte: u8) {
         self.interrupt_enable = InterruptFlags::from_bits(byte).unwrap_or_else(|| {
             event!(Level::ERROR, "Wrong IE write: {:#08b}", byte);
-            self.interrupt_enable
+            panic!();
         });
     }
 
@@ -215,7 +213,9 @@ impl Memory {
 
     fn write_io_register(&mut self, pos: u16, byte: u8) {
         match pos {
-            0xFF00 => self.buttons = byte,
+            0xFF00 => {
+                self.buttons |= byte & 0xf0 // button states are read only
+            },
             0xFF01 => self.sb = byte,
             0xFF02 => self.sc = SerialControl::from_bits(byte).unwrap(),
             0xFF04 => self.div = 0, // always resets when written
@@ -252,7 +252,6 @@ impl Memory {
 
     fn oam_transfer(&mut self, byte: u8) {
         let source_start = (byte as u16) << 8;
-        println!("OAM TRANSFER: {:#06X}", source_start);
         let mut buf = [0_u8; 0x9f];
 
         self.storage.set_position(source_start as u64);
@@ -267,7 +266,7 @@ impl Memory {
         self.div_step += 1;
         if self.div_step > DIVIDER_REG_CYCLES_PER_STEP {
             self.div_step = 0;
-            (self.div, _) = self.div.overflowing_add(1);
+            self.div = self.div.wrapping_add(1);
         }
 
         self.step_timers();
@@ -300,6 +299,9 @@ impl Memory {
     pub fn handle_serial(&mut self) {
         if self.sc.contains(SerialControl::TRANSFER_START) {
             let char = self.sb.as_char().unwrap();
+            if char  == 'T' {
+                panic!();
+            }
             if char == '\n' {
                 println!();
             } else {

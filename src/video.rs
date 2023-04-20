@@ -133,7 +133,6 @@ impl Video {
                 }
             }
             VideoMode::VramRead => {
-                self.lcd_status |= LcdStatus::OAM;
                 if self.mode_step >= 172 {
                     self.mode_step = 0;
                     self.mode = VideoMode::HBlank;
@@ -225,9 +224,9 @@ impl Video {
     }
 
     fn draw_line(&mut self) {
-         // self.draw_background();
+         self.draw_background();
          //  self.draw_window();
-         self.draw_oam();
+         // self.draw_oam();
         // self.draw_tiles();
     }
 
@@ -310,7 +309,7 @@ impl Video {
     }
 
     fn draw_tile(&mut self, tile: Tile, anchor_x: i64, anchor_y: i64) {
-        if anchor_x <= -8 || anchor_y < -8 {
+        if anchor_x < -8 || anchor_y < -8 {
             return;
         }
 

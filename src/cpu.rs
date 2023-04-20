@@ -3,7 +3,7 @@ use std::ops::Sub;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use bitvec::macros::internal::funty::{Fundamental, Integral};
+use bitvec::macros::internal::funty::{Fundamental};
 use tracing::{event, Level};
 
 use crate::cartridge::Cartridge;
@@ -172,7 +172,7 @@ impl Cpu {
 
                     self.push_word(self.pc);
                     let address = 0x0040;
-                    event!(Level::INFO, "INT 40 VBLANK | {:#08X}", address);
+                    event!(Level::DEBUG, "INT 40 VBLANK | {:#08X}", address);
                     self.pc = address;
                 }
 
@@ -193,7 +193,7 @@ impl Cpu {
 
                     self.push_word(self.pc);
                     let address = 0x0048;
-                    event!(Level::INFO, "INT 48 STAT | {:#08X}", address);
+                    event!(Level::DEBUG, "INT 48 STAT | {:#08X}", address);
                     self.pc = address;
                 }
 
@@ -211,7 +211,7 @@ impl Cpu {
 
                     self.push_word(self.pc);
                     let address = 0x0050;
-                    event!(Level::INFO, "INT 50 TIMER | {:#08X}", address);
+                    event!(Level::DEBUG, "INT 50 TIMER | {:#08X}", address);
                     self.pc = address;
                 }
             }

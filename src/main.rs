@@ -8,7 +8,7 @@ use std::io::{stdout, Read};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use clap::Parser;
+use clap::{arg, Parser};
 use ggez::conf::WindowSetup;
 use ggez::event::EventHandler;
 use ggez::graphics::{Color, DrawParam, Image, ImageFormat};
@@ -43,6 +43,9 @@ struct Args {
 
     #[arg(short, long)]
     log: Option<Level>,
+
+    #[arg(short, long)]
+    cpu_log: bool,
 }
 
 struct State {
@@ -60,21 +63,27 @@ fn main() {
         .with_level(false)
         .with_target(false);
 
-
     let file = File::create("cpu.log").unwrap();
 
-
-    let cpu_log = tracing_subscriber::fmt::layer()
-        .with_writer(file.with_max_level(Level::TRACE).with_min_level(Level::TRACE))
-        .with_line_number(false)
-        .without_time()
-        .with_ansi(false)
-        .with_level(false)
-        .with_file(false)
-        .with_target(false)
-        ;
+    let cpu_log = if args.cpu_log {
+        panic!();
+        Some(tracing_subscriber::fmt::layer()
+            .with_writer(
+                file.with_max_level(Level::TRACE)
+                    .with_min_level(Level::TRACE),
+            )
+            .with_line_number(false)
+            .without_time()
+            .with_ansi(false)
+            .with_level(false)
+            .with_file(false)
+            .with_target(false))
+    } else {
+        None
+    };
 
     let my_subscriber = Registry::default().with(stdout_log).with(cpu_log);
+
     tracing::subscriber::set_global_default(my_subscriber).expect("setting tracing default failed");
 
     // read rom file
