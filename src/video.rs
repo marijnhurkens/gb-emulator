@@ -129,7 +129,6 @@ impl Video {
                     self.mode = VideoMode::VramRead;
                     self.lcd_status -= LcdStatus::ALL_MODE_FLAGS;
                     self.lcd_status |= LcdStatus::VRAM_READ;
-                    self.draw_line();
                 }
             }
             VideoMode::VramRead => {
@@ -167,6 +166,7 @@ impl Video {
                     self.line += 1;
 
                     if self.line > 153 {
+                        self.draw_line();
                         self.mode = VideoMode::OamRead;
                         self.line = 0;
                         self.lcd_status -= LcdStatus::ALL_MODE_FLAGS;
@@ -226,7 +226,7 @@ impl Video {
     fn draw_line(&mut self) {
          self.draw_background();
          //  self.draw_window();
-         // self.draw_oam();
+          self.draw_oam();
         // self.draw_tiles();
     }
 
@@ -243,7 +243,7 @@ impl Video {
 
             if self.lcd_control.contains(LcdControl::OBJ_SIZE) {
                 let tile1 = self.get_tile(object[2] & 0xFE, false);
-                let tile2 = self.get_tile(object[2] & 0x01, false);
+                let tile2 = self.get_tile(object[2] | 0x01, false);
 
                 self.draw_tile(tile1, x_position, y_position);
                 self.draw_tile(tile2, x_position, y_position + 8);

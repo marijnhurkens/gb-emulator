@@ -66,18 +66,19 @@ fn main() {
     let file = File::create("cpu.log").unwrap();
 
     let cpu_log = if args.cpu_log {
-        panic!();
-        Some(tracing_subscriber::fmt::layer()
-            .with_writer(
-                file.with_max_level(Level::TRACE)
-                    .with_min_level(Level::TRACE),
-            )
-            .with_line_number(false)
-            .without_time()
-            .with_ansi(false)
-            .with_level(false)
-            .with_file(false)
-            .with_target(false))
+        Some(
+            tracing_subscriber::fmt::layer()
+                .with_writer(
+                    file.with_max_level(Level::TRACE)
+                        .with_min_level(Level::TRACE),
+                )
+                .with_line_number(false)
+                .without_time()
+                .with_ansi(false)
+                .with_level(false)
+                .with_file(false)
+                .with_target(false),
+        )
     } else {
         None
     };
@@ -131,10 +132,14 @@ impl EventHandler for State {
         let mut canvas = graphics::Canvas::from_frame(ctx, Color::WHITE);
 
         let guard = self.screen_buffer.lock().unwrap();
+        let image_pixels = guard
+            .into_iter()
+            .flat_map(|f| std::iter::repeat(f).take(3).chain(vec![255]))
+            .collect::<Vec<_>>();
         let image = Image::from_pixels(
             ctx,
-            &*guard,
-            ImageFormat::R8Unorm,
+            &image_pixels,
+            ImageFormat::Rgba8Unorm,
             SCREEN_WIDTH,
             SCREEN_HEIGHT,
         );
