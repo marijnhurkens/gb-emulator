@@ -1,13 +1,14 @@
 use std::io::{Cursor, Read};
+use std::sync::{Arc, Mutex};
 
 use bitflags::bitflags;
-use bitvec::macros::internal::funty::{Fundamental};
+use bitvec::macros::internal::funty::Fundamental;
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use tracing::{event, Level};
 
 use crate::cpu::CPU_FREQ;
+use crate::KeyState;
 use crate::video::{LcdControl, LcdStatus, Video, VRAM_START};
-
 
 const MEM_SIZE: usize = 1024 * 128;
 const DIVIDER_REG_CYCLES_PER_STEP: u32 = ((16_384.0 / CPU_FREQ) * CPU_FREQ) as u32;
@@ -53,14 +54,16 @@ pub struct Memory {
     bcpd: u8,
     sb: u8,
     sc: SerialControl,
+    key_state: Arc<Mutex<KeyState>>
 }
 
 impl Memory {
-    pub fn new(rom: Vec<u8>) -> Self {
+    pub fn new(rom: Vec<u8>, key_state: Arc<Mutex<KeyState>>) -> Self {
         Self {
-            storage: Cursor::new(vec![0x0; MEM_SIZE]),
             rom,
             video: Video::new(),
+            key_state,
+            storage: Cursor::new(vec![0x0; MEM_SIZE]),
             interrupt_flags: InterruptFlags::VBLANK,
             interrupt_enable: InterruptFlags::empty(),
             div_step: 0,
@@ -181,11 +184,38 @@ impl Memory {
         self.write_byte(pos + 1, bytes[1]);
     }
 
-    fn read_io_register(&self, pos: u16) -> u8 {
+    fn read_key_state(&mut self) -> u8
+    {
+        let key_state = self.key_state.lock().unwrap();
+
+        // println!("{:#10b}",  ((!key_state.start as u8) << 3) |
+        //     ((!key_state.select as u8) << 2) |
+        //     ((!key_state.b as u8) << 1) |
+        //     (!key_state.a as u8));
+        if self.buttons & 0x20 == 0x0 {
+            self.buttons = (self.buttons & 0xf0) |
+                ((!key_state.start as u8) << 3) |
+                ((!key_state.select as u8) << 2) |
+                ((!key_state.b as u8) << 1) |
+                (!key_state.a as u8);
+        }
+
+        if self.buttons & 0x10 == 0x0 {
+            self.buttons = (self.buttons & 0xf0) |
+                ((!key_state.down as u8) << 3) |
+                ((!key_state.up as u8) << 2) |
+                ((!key_state.left as u8) << 1) |
+                ((!key_state.right as u8) << 0);
+        }
+
+        self.buttons
+    }
+
+    fn read_io_register(&mut self, pos: u16) -> u8 {
         match pos {
             0xFF00 => {
                 // joypad input
-                self.buttons
+                self.read_key_state()
             }
             0xFF01 => {
                 event!(Level::WARN, "SB read, not implemented");
@@ -220,7 +250,7 @@ impl Memory {
     fn write_io_register(&mut self, pos: u16, byte: u8) {
         match pos {
             0xFF00 => {
-                self.buttons |= byte & 0xf0 // button states are read only
+                self.buttons = (self.buttons & 0xcf) | (byte & 0x30) // button states are read only
             },
             0xFF01 => self.sb = byte,
             0xFF02 => self.sc = SerialControl::from_bits(byte).unwrap(),

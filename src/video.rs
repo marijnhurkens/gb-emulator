@@ -4,15 +4,15 @@ use bitflags::bitflags;
 use byteorder::{ReadBytesExt, WriteBytesExt};
 
 use crate::memory::InterruptFlags;
-use crate::{helpers, SCREEN_BUFFER_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH};
+use crate::{helpers, SCREEN_HEIGHT, SCREEN_WIDTH, SCREEN_BUFFER_SIZE};
 
 pub const VRAM_START: u16 = 0x8000;
 const VRAM_END: u16 = 0xA000;
-const VRAM_SIZE: u16 = VRAM_END+1 - VRAM_START;
+const VRAM_SIZE: u16 = VRAM_END + 1 - VRAM_START;
 
 const OAM_START: u16 = 0xFE00;
 const OAM_END: u16 = 0xFE9F;
-const OAM_SIZE: u16 = OAM_END+1 - OAM_START;
+const OAM_SIZE: u16 = OAM_END + 1 - OAM_START;
 
 const BACKGROUND_MAP_START: u16 = 0x9800;
 const BACKGROUND_MAP_END: u16 = 0x9BFF;
@@ -20,7 +20,6 @@ const BACKGROUND_MAP_SIZE: u16 = BACKGROUND_MAP_END + 1 - BACKGROUND_MAP_START;
 const WINDOW_MAP_START: u16 = 0x9C00;
 const WINDOW_MAP_END: u16 = 0x9FFF;
 const WINDOW_MAP_SIZE: u16 = WINDOW_MAP_END + 1 - WINDOW_MAP_START;
-
 
 #[derive(Debug)]
 pub struct Video {
@@ -224,9 +223,9 @@ impl Video {
     }
 
     fn draw_line(&mut self) {
-         self.draw_background();
-         //  self.draw_window();
-          self.draw_oam();
+        self.draw_background();
+        //  self.draw_window();
+        self.draw_oam();
         // self.draw_tiles();
     }
 
@@ -239,7 +238,6 @@ impl Video {
             let y_position = object[0] as i64 - 16;
             let x_position = object[1] as i64 - 8;
             let attributes = ObjectAttributes::from_bits(object[3]);
-
 
             if self.lcd_control.contains(LcdControl::OBJ_SIZE) {
                 let tile1 = self.get_tile(object[2] & 0xFE, false);

@@ -1,5 +1,6 @@
 use std::io;
 use std::ops::Sub;
+use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -36,6 +37,7 @@ pub struct Cpu {
     break_point: Option<u16>,
     current_opcode: Option<u8>,
     current_instruction: Option<Instruction>,
+    frame_start: Instant,
 }
 
 #[derive(Debug)]
@@ -70,7 +72,7 @@ enum CpuState {
 }
 
 impl Cpu {
-    pub fn load_cartridge(cartridge: Cartridge) -> Self {
+    pub fn load_cartridge(cartridge: Cartridge, memory: Memory) -> Self {
         Cpu {
             pc: 0x0100,
             sp: STACK_START,
@@ -88,16 +90,17 @@ impl Cpu {
                 h: true,
             },
             interrupts_enabled: false,
-            memory: Memory::new(cartridge.data.clone()),
+            memory,
             cartridge,
             state: CpuState::Stopped,
             break_point: None,
             current_opcode: None,
             current_instruction: None,
+            frame_start: Instant::now(),
         }
     }
 
-    pub fn run(&mut self, screen_buffer: Option<ScreenBuffer>, break_point: Option<u16>) {
+    pub fn run(&mut self, screen_buffer: Option<Arc<Mutex<ScreenBuffer>>>, break_point: Option<u16>) {
         let title = &self.cartridge.header.title;
         event!(Level::INFO, "Running {:}", title);
 
@@ -111,17 +114,15 @@ impl Cpu {
         }
     }
 
-    pub fn cycle(&mut self, screen_buffer: &Option<ScreenBuffer>) {
+    pub fn cycle(&mut self, screen_buffer: &Option<Arc<Mutex<ScreenBuffer>>>) {
         // Catch PC out of bounds
         if self.pc as usize > 0xFFFF {
             panic!("PC out of bounds");
         }
 
-
         self.current_opcode = Some(self.memory.read_byte(self.pc));
         let (instruction, length) = decode(&mut self.memory, self.pc);
         self.current_instruction = Some(instruction);
-
 
         event!(
             Level::DEBUG,
@@ -139,9 +140,8 @@ impl Cpu {
 
         self.pc = self.pc.wrapping_add(length);
 
-        let start_time = Instant::now();
         let t_cycles = self.process_instruction(instruction) * 4;
-        self.log_doctor();
+        // self.log_doctor();
 
         for _ in 0..t_cycles {
             self.memory.step();
@@ -174,6 +174,18 @@ impl Cpu {
                     let address = 0x0040;
                     event!(Level::DEBUG, "INT 40 VBLANK | {:#08X}", address);
                     self.pc = address;
+
+                    // handle timing
+                    let expected_time = Duration::from_secs_f64(1.0 / 59.73);
+                    let end_time = Instant::now();
+                    let time_elapsed = end_time.duration_since(self.frame_start);
+
+                    if time_elapsed.lt(&expected_time) {
+                        let sleep_for = expected_time.sub(time_elapsed);
+                        sleep(sleep_for);
+                    }
+
+                    self.frame_start = Instant::now();
                 }
 
                 if self
@@ -218,16 +230,6 @@ impl Cpu {
         }
 
         self.memory.handle_serial();
-
-        // handle timing
-        let end_time = Instant::now();
-        let expected_time = Duration::from_secs_f64(t_cycles as f64 / CPU_FREQ);
-        let time_elapsed = end_time.duration_since(start_time);
-
-        if time_elapsed.lt(&expected_time) {
-            let sleep_for = expected_time.sub(time_elapsed);
-            sleep(sleep_for);
-        }
     }
 
     /**
@@ -236,7 +238,7 @@ impl Cpu {
     fn process_instruction(&mut self, instruction: Instruction) -> usize {
         let m_cycles = match instruction {
             Instruction::NOP => 1,
-            Instruction::HALT => panic!("HALT"),
+            Instruction::HALT => 0,
             Instruction::INC(operand) => self.increment(operand),
             Instruction::DEC(operand) => self.decrement(operand),
             Instruction::LD(load) => self.ld(load),
@@ -1756,9 +1758,11 @@ impl Cpu {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
     use crate::cartridge::CartridgeHeader;
     use crate::cpu::{CpuState, STACK_START};
-    use crate::{Cartridge, Cpu};
+    use crate::{Cartridge, Cpu, KeyState};
+    use crate::memory::Memory;
 
     #[test]
     fn it_executes_call() {
@@ -1770,7 +1774,9 @@ mod tests {
             data: vec![0xCD, 0x03, 0x00],
         };
 
-        let mut cpu = Cpu::load_cartridge(cartridge);
+        let memory = Memory::new(cartridge.data.clone(),  Arc::new(Mutex::new(KeyState::default())));
+
+        let mut cpu = Cpu::load_cartridge(cartridge, memory);
         cpu.state = CpuState::Running;
         cpu.pc = 0;
         cpu.cycle(&None);
@@ -1789,7 +1795,9 @@ mod tests {
             data: vec![0xCD, 0x04, 0x00, 0x00, 0xC9],
         };
 
-        let mut cpu = Cpu::load_cartridge(cartridge);
+        let memory = Memory::new(cartridge.data.clone(),  Arc::new(Mutex::new(KeyState::default())));
+
+        let mut cpu = Cpu::load_cartridge(cartridge, memory);
         cpu.state = CpuState::Running;
         cpu.pc = 0;
         cpu.cycle(&None);

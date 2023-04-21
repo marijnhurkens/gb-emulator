@@ -12,6 +12,7 @@ use clap::{arg, Parser};
 use ggez::conf::WindowSetup;
 use ggez::event::EventHandler;
 use ggez::graphics::{Color, DrawParam, Image, ImageFormat};
+use ggez::input::keyboard::{KeyCode};
 use ggez::mint::Vector2;
 use ggez::{event, graphics, Context, ContextBuilder, GameResult};
 use tracing::Level;
@@ -21,6 +22,7 @@ use tracing_subscriber::Registry;
 
 use crate::cartridge::Cartridge;
 use crate::cpu::Cpu;
+use crate::memory::Memory;
 
 mod cartridge;
 mod cpu;
@@ -32,7 +34,8 @@ mod video;
 const SCREEN_WIDTH: u32 = 160;
 const SCREEN_HEIGHT: u32 = 144;
 const SCREEN_BUFFER_SIZE: usize = (SCREEN_WIDTH * SCREEN_HEIGHT) as usize;
-type ScreenBuffer = Arc<Mutex<[u8; SCREEN_BUFFER_SIZE]>>;
+
+type ScreenBuffer = [u8; SCREEN_BUFFER_SIZE];
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -48,8 +51,21 @@ struct Args {
     cpu_log: bool,
 }
 
+#[derive(Debug, Default)]
+pub struct KeyState {
+    up: bool,
+    down: bool,
+    left: bool,
+    right: bool,
+    start: bool,
+    select: bool,
+    a: bool,
+    b: bool,
+}
+
 struct State {
-    screen_buffer: ScreenBuffer,
+    screen_buffer: Arc<Mutex<ScreenBuffer>>,
+    key_state: Arc<Mutex<KeyState>>,
 }
 
 fn main() {
@@ -91,19 +107,21 @@ fn main() {
     let mut rom = File::open(&args.rom_file).unwrap();
     let mut data = vec![];
     rom.read_to_end(&mut data).unwrap();
+    let cartridge = Cartridge::load_rom(data.clone());
 
-    let cartridge = Cartridge::load_rom(data);
-    let mut cpu = Cpu::load_cartridge(cartridge);
+    let screen_buffer: Arc<Mutex<ScreenBuffer>> = Arc::new(Mutex::new([0; SCREEN_BUFFER_SIZE]));
+    let cpu_screen_buffer = screen_buffer.clone();
+    let key_state = Arc::new(Mutex::new(KeyState::default()));
+
+    let memory = Memory::new(data,  key_state.clone());
+    let mut cpu = Cpu::load_cartridge(cartridge, memory);
 
     let break_point = args
         .break_point
         .map(|break_point| u16::from_str_radix(break_point.trim_start_matches("0x"), 16).unwrap());
 
-    let screen_buffer: ScreenBuffer = Arc::new(Mutex::new([0; SCREEN_BUFFER_SIZE]));
-
-    let cpu_screen_buffer = screen_buffer.clone();
     thread::spawn(move || {
-        cpu.run(Some(cpu_screen_buffer.clone()), break_point);
+        cpu.run(Some(cpu_screen_buffer), break_point);
     });
 
     let (mut ctx, event_loop) = ContextBuilder::new("gb_emu", "")
@@ -111,20 +129,39 @@ fn main() {
         .build()
         .expect("Error creating context.");
 
-    let state = State::new(&mut ctx, screen_buffer);
+    let state = State::new(&mut ctx, screen_buffer, key_state);
 
     event::run(ctx, event_loop, state);
 }
 
 impl State {
-    pub fn new(_ctx: &mut Context, screen_buffer: ScreenBuffer) -> State {
-        State { screen_buffer }
+    pub fn new(
+        _ctx: &mut Context,
+        screen_buffer: Arc<Mutex<ScreenBuffer>>,
+        key_state: Arc<Mutex<KeyState>>,
+    ) -> State {
+        State {
+            screen_buffer,
+            key_state,
+        }
     }
 }
 
 impl EventHandler for State {
     fn update(&mut self, _ctx: &mut Context) -> GameResult {
-        // Update code here...
+        let mut key_state = self.key_state.lock().unwrap();
+
+        key_state.a = _ctx.keyboard.is_key_pressed(KeyCode::Z);
+        key_state.b = _ctx.keyboard.is_key_pressed(KeyCode::X);
+
+        key_state.up = _ctx.keyboard.is_key_pressed(KeyCode::Up);
+        key_state.down = _ctx.keyboard.is_key_pressed(KeyCode::Down);
+        key_state.left = _ctx.keyboard.is_key_pressed(KeyCode::Left);
+        key_state.right = _ctx.keyboard.is_key_pressed(KeyCode::Right);
+
+        key_state.select = _ctx.keyboard.is_key_pressed(KeyCode::Backslash);
+        key_state.start = _ctx.keyboard.is_key_pressed(KeyCode::Return);
+
         Ok(())
     }
 
