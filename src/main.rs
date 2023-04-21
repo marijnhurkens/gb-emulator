@@ -12,7 +12,7 @@ use clap::{arg, Parser};
 use ggez::conf::WindowSetup;
 use ggez::event::EventHandler;
 use ggez::graphics::{Color, DrawParam, Image, ImageFormat};
-use ggez::input::keyboard::{KeyCode};
+use ggez::input::keyboard::KeyCode;
 use ggez::mint::Vector2;
 use ggez::{event, graphics, Context, ContextBuilder, GameResult};
 use tracing::Level;
@@ -113,7 +113,7 @@ fn main() {
     let cpu_screen_buffer = screen_buffer.clone();
     let key_state = Arc::new(Mutex::new(KeyState::default()));
 
-    let memory = Memory::new(data,  key_state.clone());
+    let memory = Memory::new(data, key_state.clone());
     let mut cpu = Cpu::load_cartridge(cartridge, memory);
 
     let break_point = args

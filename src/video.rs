@@ -4,7 +4,7 @@ use bitflags::bitflags;
 use byteorder::{ReadBytesExt, WriteBytesExt};
 
 use crate::memory::InterruptFlags;
-use crate::{helpers, SCREEN_HEIGHT, SCREEN_WIDTH, SCREEN_BUFFER_SIZE};
+use crate::{helpers, SCREEN_BUFFER_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 pub const VRAM_START: u16 = 0x8000;
 const VRAM_END: u16 = 0xA000;
@@ -311,19 +311,22 @@ impl Video {
             return;
         }
 
-        tile.chunks(8).skip(anchor_y.min(0).abs() as usize).enumerate().for_each(|(i, row)| {
-            let y = anchor_y as u64 + i as u64;
-            self.screen_buffer
-                .set_position(y * SCREEN_WIDTH as u64 + anchor_x.max(0) as u64);
-            let row_scaled: [u8; 8] = row
-                .iter()
-                .skip(anchor_x.min(0).abs() as usize)
-                .map(|f| f * 60)
-                .collect::<Vec<u8>>()
-                .try_into()
-                .unwrap();
-            let _ = self.screen_buffer.write(&row_scaled).unwrap();
-        })
+        tile.chunks(8)
+            .skip(anchor_y.min(0).abs() as usize)
+            .enumerate()
+            .for_each(|(i, row)| {
+                let y = anchor_y as u64 + i as u64;
+                self.screen_buffer
+                    .set_position(y * SCREEN_WIDTH as u64 + anchor_x.max(0) as u64);
+                let row_scaled: [u8; 8] = row
+                    .iter()
+                    .skip(anchor_x.min(0).abs() as usize)
+                    .map(|f| f * 60)
+                    .collect::<Vec<u8>>()
+                    .try_into()
+                    .unwrap();
+                let _ = self.screen_buffer.write(&row_scaled).unwrap();
+            })
     }
 
     fn get_tile(&mut self, number: u8, signed: bool) -> Tile {

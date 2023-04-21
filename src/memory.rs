@@ -7,8 +7,8 @@ use byteorder::{ReadBytesExt, WriteBytesExt};
 use tracing::{event, Level};
 
 use crate::cpu::CPU_FREQ;
-use crate::KeyState;
 use crate::video::{LcdControl, LcdStatus, Video, VRAM_START};
+use crate::KeyState;
 
 const MEM_SIZE: usize = 1024 * 128;
 const DIVIDER_REG_CYCLES_PER_STEP: u32 = ((16_384.0 / CPU_FREQ) * CPU_FREQ) as u32;
@@ -54,7 +54,7 @@ pub struct Memory {
     bcpd: u8,
     sb: u8,
     sc: SerialControl,
-    key_state: Arc<Mutex<KeyState>>
+    key_state: Arc<Mutex<KeyState>>,
 }
 
 impl Memory {
@@ -184,8 +184,7 @@ impl Memory {
         self.write_byte(pos + 1, bytes[1]);
     }
 
-    fn read_key_state(&mut self) -> u8
-    {
+    fn read_key_state(&mut self) -> u8 {
         let key_state = self.key_state.lock().unwrap();
 
         // println!("{:#10b}",  ((!key_state.start as u8) << 3) |
@@ -193,19 +192,19 @@ impl Memory {
         //     ((!key_state.b as u8) << 1) |
         //     (!key_state.a as u8));
         if self.buttons & 0x20 == 0x0 {
-            self.buttons = (self.buttons & 0xf0) |
-                ((!key_state.start as u8) << 3) |
-                ((!key_state.select as u8) << 2) |
-                ((!key_state.b as u8) << 1) |
-                (!key_state.a as u8);
+            self.buttons = (self.buttons & 0xf0)
+                | ((!key_state.start as u8) << 3)
+                | ((!key_state.select as u8) << 2)
+                | ((!key_state.b as u8) << 1)
+                | (!key_state.a as u8);
         }
 
         if self.buttons & 0x10 == 0x0 {
-            self.buttons = (self.buttons & 0xf0) |
-                ((!key_state.down as u8) << 3) |
-                ((!key_state.up as u8) << 2) |
-                ((!key_state.left as u8) << 1) |
-                ((!key_state.right as u8) << 0);
+            self.buttons = (self.buttons & 0xf0)
+                | ((!key_state.down as u8) << 3)
+                | ((!key_state.up as u8) << 2)
+                | ((!key_state.left as u8) << 1)
+                | ((!key_state.right as u8) << 0);
         }
 
         self.buttons
@@ -236,7 +235,7 @@ impl Memory {
             0xFF43 => self.video.scx,
             0xFF44 => {
                 self.video.line // LY, LCD y coordinate
-                // 0x90
+                                // 0x90
             }
             0xFF45 => {
                 unimplemented!()
@@ -251,7 +250,7 @@ impl Memory {
         match pos {
             0xFF00 => {
                 self.buttons = (self.buttons & 0xcf) | (byte & 0x30) // button states are read only
-            },
+            }
             0xFF01 => self.sb = byte,
             0xFF02 => self.sc = SerialControl::from_bits(byte).unwrap(),
             0xFF04 => self.div = 0, // always resets when written
@@ -336,7 +335,7 @@ impl Memory {
     pub fn handle_serial(&mut self) {
         if self.sc.contains(SerialControl::TRANSFER_START) {
             let char = self.sb.as_char().unwrap();
-            if char  == 'T' {
+            if char == 'T' {
                 panic!();
             }
             if char == '\n' {

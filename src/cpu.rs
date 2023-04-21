@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use bitvec::macros::internal::funty::{Fundamental};
+use bitvec::macros::internal::funty::Fundamental;
 use tracing::{event, Level};
 
 use crate::cartridge::Cartridge;
@@ -100,7 +100,11 @@ impl Cpu {
         }
     }
 
-    pub fn run(&mut self, screen_buffer: Option<Arc<Mutex<ScreenBuffer>>>, break_point: Option<u16>) {
+    pub fn run(
+        &mut self,
+        screen_buffer: Option<Arc<Mutex<ScreenBuffer>>>,
+        break_point: Option<u16>,
+    ) {
         let title = &self.cartridge.header.title;
         event!(Level::INFO, "Running {:}", title);
 
@@ -193,9 +197,9 @@ impl Cpu {
                     .interrupt_flags
                     .contains(InterruptFlags::LCD_STAT)
                     && self
-                    .memory
-                    .interrupt_enable
-                    .contains(InterruptFlags::LCD_STAT)
+                        .memory
+                        .interrupt_enable
+                        .contains(InterruptFlags::LCD_STAT)
                 {
                     self.interrupts_enabled = false;
                     let interrupt_flags =
@@ -210,10 +214,7 @@ impl Cpu {
                 }
 
                 if self.memory.interrupt_flags.contains(InterruptFlags::TIMER)
-                    && self
-                        .memory
-                        .interrupt_enable
-                        .contains(InterruptFlags::TIMER)
+                    && self.memory.interrupt_enable.contains(InterruptFlags::TIMER)
                 {
                     self.interrupts_enabled = false;
                     let interrupt_flags =
@@ -890,7 +891,9 @@ impl Cpu {
                 }
                 MemoryLocation::Register(source_register) => {
                     let memory_location = self.get_register(source_register);
-                    let data = self.memory.read_byte(u16::from_le_bytes([memory_location, 0xff]));
+                    let data = self
+                        .memory
+                        .read_byte(u16::from_le_bytes([memory_location, 0xff]));
                     match load.target {
                         Operand::Register(register) => {
                             self.set_register(register, data);
@@ -1286,9 +1289,9 @@ impl Cpu {
                         self.flags.h = ((self.sp as u32 & 0xF) + (source_operand & 0xF)) > 0xF;
 
                         (self.sp as u32).wrapping_add(source_operand)
-                    },
+                    }
                     _ => panic!("not implemented"),
-                }
+                },
                 _ => panic!("not implemented"),
             },
             Operand::Register(source_register) => match add.target {
@@ -1353,7 +1356,6 @@ impl Cpu {
                 _ => panic!("not implemented"),
             },
             _ => {
-
                 panic!("not implemented")
             }
         };
@@ -1544,8 +1546,6 @@ impl Cpu {
 
         1
     }
-
-
 
     fn jump(&mut self, operand: Operand, condition: Option<Condition>) -> usize {
         let mut cycles = 4;
@@ -1758,11 +1758,11 @@ impl Cpu {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
     use crate::cartridge::CartridgeHeader;
     use crate::cpu::{CpuState, STACK_START};
-    use crate::{Cartridge, Cpu, KeyState};
     use crate::memory::Memory;
+    use crate::{Cartridge, Cpu, KeyState};
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn it_executes_call() {
@@ -1774,7 +1774,10 @@ mod tests {
             data: vec![0xCD, 0x03, 0x00],
         };
 
-        let memory = Memory::new(cartridge.data.clone(),  Arc::new(Mutex::new(KeyState::default())));
+        let memory = Memory::new(
+            cartridge.data.clone(),
+            Arc::new(Mutex::new(KeyState::default())),
+        );
 
         let mut cpu = Cpu::load_cartridge(cartridge, memory);
         cpu.state = CpuState::Running;
@@ -1795,7 +1798,10 @@ mod tests {
             data: vec![0xCD, 0x04, 0x00, 0x00, 0xC9],
         };
 
-        let memory = Memory::new(cartridge.data.clone(),  Arc::new(Mutex::new(KeyState::default())));
+        let memory = Memory::new(
+            cartridge.data.clone(),
+            Arc::new(Mutex::new(KeyState::default())),
+        );
 
         let mut cpu = Cpu::load_cartridge(cartridge, memory);
         cpu.state = CpuState::Running;
