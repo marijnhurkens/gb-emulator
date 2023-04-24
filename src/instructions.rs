@@ -505,47 +505,47 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
 fn decode_cb(opcode: u8) -> InstructionCB {
     match opcode {
         0x00..=0x07 => {
-            let source =
-                int_to_register(opcode & 0x07).unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
+            let source = int_to_register(opcode & 0x07)
+                .unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
             InstructionCB::RLC(source)
         }
         0x08..=0x0F => {
-            let source =
-                int_to_register(opcode & 0x07).unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
+            let source = int_to_register(opcode & 0x07)
+                .unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
             InstructionCB::RRC(source)
         }
         0x10..=0x17 => {
-            let source =
-                int_to_register(opcode & 0x07).unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
+            let source = int_to_register(opcode & 0x07)
+                .unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
             InstructionCB::RL(source)
         }
         0x18..=0x1f => {
-            let source =
-                int_to_register(opcode & 0x07).unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
+            let source = int_to_register(opcode & 0x07)
+                .unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
 
             InstructionCB::RR(source)
         }
         0x20..=0x27 => {
-            let source =
-                int_to_register(opcode & 0x07).unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
+            let source = int_to_register(opcode & 0x07)
+                .unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
 
             InstructionCB::SLA(source)
         }
         0x28..=0x2F => {
-            let source =
-                int_to_register(opcode & 0x07).unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
+            let source = int_to_register(opcode & 0x07)
+                .unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
 
             InstructionCB::SRA(source)
         }
         0x30..=0x37 => {
-            let source =
-                int_to_register(opcode & 0x07).unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
+            let source = int_to_register(opcode & 0x07)
+                .unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
 
             InstructionCB::SWAP(source)
         }
         0x38..=0x3F => {
-            let source =
-                int_to_register(opcode & 0x07).unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
+            let source = int_to_register(opcode & 0x07)
+                .unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
 
             InstructionCB::SRL(source)
         }
@@ -553,22 +553,22 @@ fn decode_cb(opcode: u8) -> InstructionCB {
             // BIT
             // divide by 8 and take remainder of mod 8
             let bit = (opcode >> 3) & 0x7;
-            let target =
-                int_to_register(opcode & 0x07).unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
+            let target = int_to_register(opcode & 0x07)
+                .unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
 
             InstructionCB::BIT(bit, target)
         }
         0x80..=0xBF => {
             let bit = (opcode >> 3) & 0x7;
-            let target =
-                int_to_register(opcode & 0x07).unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
+            let target = int_to_register(opcode & 0x07)
+                .unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
 
             InstructionCB::RES(bit, target)
         }
         0xC0..=0xFF => {
             let bit = (opcode >> 3) & 0x7;
-            let target =
-                int_to_register(opcode & 0x07).unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
+            let target = int_to_register(opcode & 0x07)
+                .unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
 
             InstructionCB::SET(bit, target)
         }

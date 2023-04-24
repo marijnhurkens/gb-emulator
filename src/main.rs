@@ -1,4 +1,4 @@
-#![allow(dead_code,clippy::upper_case_acronyms)]
+#![allow(dead_code, clippy::upper_case_acronyms)]
 
 extern crate core;
 
