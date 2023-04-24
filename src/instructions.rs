@@ -173,7 +173,7 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
         0x76 => (Instruction::HALT, 1),
         0x40..=0x7F => {
             let target = int_to_register(((opcode - 0x40) & 0xf8) >> 3)
-                .expect(&format!("Unknown opcode {:#04X}", opcode));
+                .unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
 
             let source = int_to_register(opcode & 0x07)
                 .unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
@@ -506,46 +506,46 @@ fn decode_cb(opcode: u8) -> InstructionCB {
     match opcode {
         0x00..=0x07 => {
             let source =
-                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+                int_to_register(opcode & 0x07).unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
             InstructionCB::RLC(source)
         }
         0x08..=0x0F => {
             let source =
-                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+                int_to_register(opcode & 0x07).unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
             InstructionCB::RRC(source)
         }
         0x10..=0x17 => {
             let source =
-                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+                int_to_register(opcode & 0x07).unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
             InstructionCB::RL(source)
         }
         0x18..=0x1f => {
             let source =
-                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+                int_to_register(opcode & 0x07).unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
 
             InstructionCB::RR(source)
         }
         0x20..=0x27 => {
             let source =
-                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+                int_to_register(opcode & 0x07).unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
 
             InstructionCB::SLA(source)
         }
         0x28..=0x2F => {
             let source =
-                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+                int_to_register(opcode & 0x07).unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
 
             InstructionCB::SRA(source)
         }
         0x30..=0x37 => {
             let source =
-                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+                int_to_register(opcode & 0x07).unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
 
             InstructionCB::SWAP(source)
         }
         0x38..=0x3F => {
             let source =
-                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+                int_to_register(opcode & 0x07).unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
 
             InstructionCB::SRL(source)
         }
@@ -554,21 +554,21 @@ fn decode_cb(opcode: u8) -> InstructionCB {
             // divide by 8 and take remainder of mod 8
             let bit = (opcode >> 3) & 0x7;
             let target =
-                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+                int_to_register(opcode & 0x07).unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
 
             InstructionCB::BIT(bit, target)
         }
         0x80..=0xBF => {
             let bit = (opcode >> 3) & 0x7;
             let target =
-                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+                int_to_register(opcode & 0x07).unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
 
             InstructionCB::RES(bit, target)
         }
         0xC0..=0xFF => {
             let bit = (opcode >> 3) & 0x7;
             let target =
-                int_to_register(opcode & 0x07).expect(&format!("Unknown opcode {:#04X}", opcode));
+                int_to_register(opcode & 0x07).unwrap_or_else(|_| panic!("Unknown opcode {:#04X}", opcode));
 
             InstructionCB::SET(bit, target)
         }
@@ -834,13 +834,13 @@ pub enum ImmediateOperand {
 
 impl Display for ImmediateOperand {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        return match self {
+        match self {
             ImmediateOperand::A16(a16) => write!(f, "a16[{:04X}, {}]", a16, a16),
             ImmediateOperand::D16(d16) => write!(f, "d16[{:04X}, {}]", d16, d16),
             ImmediateOperand::S8(s8) => write!(f, "s8[{:02X}, {}]", s8, s8),
             ImmediateOperand::D8(d8) => write!(f, "d8[{:02X}, {}]", d8, d8),
             ImmediateOperand::A8(a8) => write!(f, "a8[{:02X}, {}]", a8, a8),
-        };
+        }
     }
 }
 

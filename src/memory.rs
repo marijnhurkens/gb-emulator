@@ -81,7 +81,7 @@ impl Memory {
     }
 
     pub fn read_byte(&mut self, pos: u16) -> u8 {
-        let res = match pos {
+        match pos {
             0x0000..=0x3FFF => {
                 // Memory bank 0
                 self.read_byte_from_rom(pos)
@@ -108,9 +108,7 @@ impl Memory {
             _ => {
                 unimplemented!("Memory map not implemented for {:#08X}", pos)
             }
-        };
-
-        res
+        }
     }
 
     fn read_byte_from_storage(&mut self, pos: u16) -> u8 {
@@ -204,7 +202,7 @@ impl Memory {
                 | ((!key_state.down as u8) << 3)
                 | ((!key_state.up as u8) << 2)
                 | ((!key_state.left as u8) << 1)
-                | ((!key_state.right as u8) << 0);
+                | (!key_state.right as u8);
         }
 
         self.buttons

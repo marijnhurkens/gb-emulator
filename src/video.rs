@@ -186,7 +186,7 @@ impl Video {
             interrupt_flags |= InterruptFlags::LCD_STAT;
         }
 
-        return interrupt_flags;
+        interrupt_flags
     }
 
     pub fn read_screen_buffer(&mut self) -> [u8; SCREEN_BUFFER_SIZE] {
@@ -237,7 +237,7 @@ impl Video {
         data.chunks(4).for_each(|object| {
             let y_position = object[0] as i64 - 16;
             let x_position = object[1] as i64 - 8;
-            let attributes = ObjectAttributes::from_bits(object[3]);
+            let _attributes = ObjectAttributes::from_bits(object[3]);
 
             if self.lcd_control.contains(LcdControl::OBJ_SIZE) {
                 let tile1 = self.get_tile(object[2] & 0xFE, false);
@@ -312,7 +312,7 @@ impl Video {
         }
 
         tile.chunks(8)
-            .skip(anchor_y.min(0).abs() as usize)
+            .skip(anchor_y.min(0).unsigned_abs() as usize)
             .enumerate()
             .for_each(|(i, row)| {
                 let y = anchor_y as u64 + i as u64;
@@ -320,7 +320,7 @@ impl Video {
                     .set_position(y * SCREEN_WIDTH as u64 + anchor_x.max(0) as u64);
                 let row_scaled: [u8; 8] = row
                     .iter()
-                    .skip(anchor_x.min(0).abs() as usize)
+                    .skip(anchor_x.min(0).unsigned_abs() as usize)
                     .map(|f| f * 60)
                     .collect::<Vec<u8>>()
                     .try_into()

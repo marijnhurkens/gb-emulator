@@ -447,17 +447,14 @@ impl Cpu {
                 self.set_register(register, result);
                 result
             }
-            Operand::MemoryLocation(location) => match location {
-                MemoryLocation::RegisterPair(pair) => {
-                    let memory_pos = self.get_register_pair(pair);
-                    let data = self.memory.read_byte(memory_pos);
-                    let result = ((data & 0b00001111) << 4) | (data >> 4);
-                    self.memory.write_byte(memory_pos, result);
-                    cycles = 4;
-                    result
-                }
-                _ => panic!("should not happen"),
-            },
+            Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
+                let memory_pos = self.get_register_pair(pair);
+                let data = self.memory.read_byte(memory_pos);
+                let result = ((data & 0b00001111) << 4) | (data >> 4);
+                self.memory.write_byte(memory_pos, result);
+                cycles = 4;
+                result
+            }
             _ => panic!("should not happen"),
         };
 
@@ -479,18 +476,15 @@ impl Cpu {
                 self.set_register(register, result);
                 result
             }
-            Operand::MemoryLocation(location) => match location {
-                MemoryLocation::RegisterPair(pair) => {
-                    let memory_pos = self.get_register_pair(pair);
-                    let data = self.memory.read_byte(memory_pos);
-                    self.flags.c = data & 0x01 == 0x1;
-                    let result = (data >> 1) | (self.flags.c as u8) << 7;
-                    self.memory.write_byte(memory_pos, result);
-                    cycles = 4;
-                    result
-                }
-                _ => panic!("should not happen"),
-            },
+            Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
+                let memory_pos = self.get_register_pair(pair);
+                let data = self.memory.read_byte(memory_pos);
+                self.flags.c = data & 0x01 == 0x1;
+                let result = (data >> 1) | (self.flags.c as u8) << 7;
+                self.memory.write_byte(memory_pos, result);
+                cycles = 4;
+                result
+            }
             _ => panic!("should not happen"),
         };
 
@@ -511,18 +505,15 @@ impl Cpu {
                 self.set_register(register, result);
                 result
             }
-            Operand::MemoryLocation(location) => match location {
-                MemoryLocation::RegisterPair(pair) => {
-                    let memory_pos = self.get_register_pair(pair);
-                    let data = self.memory.read_byte(memory_pos);
-                    self.flags.c = data >> 7 == 0x1;
-                    let result = (data << 1) | self.flags.c as u8;
-                    self.memory.write_byte(memory_pos, result);
-                    cycles = 4;
-                    result
-                }
-                _ => panic!("should not happen"),
-            },
+            Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
+                let memory_pos = self.get_register_pair(pair);
+                let data = self.memory.read_byte(memory_pos);
+                self.flags.c = data >> 7 == 0x1;
+                let result = (data << 1) | self.flags.c as u8;
+                self.memory.write_byte(memory_pos, result);
+                cycles = 4;
+                result
+            }
             _ => panic!("should not happen"),
         };
 
@@ -544,21 +535,18 @@ impl Cpu {
                 self.set_register(register, result);
                 result
             }
-            Operand::MemoryLocation(location) => match location {
-                MemoryLocation::RegisterPair(pair) => {
-                    let memory_pos = self.get_register_pair(pair);
-                    let data = self.memory.read_byte(memory_pos);
+            Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
+                let memory_pos = self.get_register_pair(pair);
+                let data = self.memory.read_byte(memory_pos);
 
-                    let carry_prev = self.flags.c as u8;
-                    self.flags.c = data >> 7 == 0x1;
-                    let result = (data << 1) | carry_prev;
+                let carry_prev = self.flags.c as u8;
+                self.flags.c = data >> 7 == 0x1;
+                let result = (data << 1) | carry_prev;
 
-                    self.memory.write_byte(memory_pos, result);
-                    cycles = 4;
-                    result
-                }
-                _ => panic!("should not happen"),
-            },
+                self.memory.write_byte(memory_pos, result);
+                cycles = 4;
+                result
+            }
             _ => panic!("should not happen"),
         };
 
@@ -580,21 +568,18 @@ impl Cpu {
                 self.set_register(register, result);
                 result
             }
-            Operand::MemoryLocation(location) => match location {
-                MemoryLocation::RegisterPair(pair) => {
-                    let memory_pos = self.get_register_pair(pair);
-                    let data = self.memory.read_byte(memory_pos);
+            Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
+                let memory_pos = self.get_register_pair(pair);
+                let data = self.memory.read_byte(memory_pos);
 
-                    let carry_prev = self.flags.c as u8;
-                    self.flags.c = data & 0x1 == 0x1;
-                    let result = (data >> 1) | carry_prev << 7;
+                let carry_prev = self.flags.c as u8;
+                self.flags.c = data & 0x1 == 0x1;
+                let result = (data >> 1) | carry_prev << 7;
 
-                    self.memory.write_byte(memory_pos, result);
-                    cycles = 4;
-                    result
-                }
-                _ => panic!("should not happen"),
-            },
+                self.memory.write_byte(memory_pos, result);
+                cycles = 4;
+                result
+            }
             _ => panic!("should not happen"),
         };
 
@@ -615,18 +600,15 @@ impl Cpu {
                 self.set_register(register, result);
                 result
             }
-            Operand::MemoryLocation(location) => match location {
-                MemoryLocation::RegisterPair(pair) => {
-                    let memory_pos = self.get_register_pair(pair);
-                    let data = self.memory.read_byte(memory_pos);
-                    self.flags.c = data >> 7 == 0x1;
-                    let result = data << 1;
-                    self.memory.write_byte(memory_pos, result);
-                    cycles = 4;
-                    result
-                }
-                _ => panic!("should not happen"),
-            },
+            Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
+                let memory_pos = self.get_register_pair(pair);
+                let data = self.memory.read_byte(memory_pos);
+                self.flags.c = data >> 7 == 0x1;
+                let result = data << 1;
+                self.memory.write_byte(memory_pos, result);
+                cycles = 4;
+                result
+            }
             _ => panic!("should not happen"),
         };
 
@@ -647,18 +629,15 @@ impl Cpu {
                 self.set_register(register, result);
                 result
             }
-            Operand::MemoryLocation(location) => match location {
-                MemoryLocation::RegisterPair(pair) => {
-                    let memory_pos = self.get_register_pair(pair);
-                    let data = self.memory.read_byte(memory_pos);
-                    self.flags.c = data & 0x1 == 0x1;
-                    let result = data >> 1 | data & 0x80;
-                    self.memory.write_byte(memory_pos, result);
-                    cycles = 4;
-                    result
-                }
-                _ => panic!("should not happen"),
-            },
+            Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
+                let memory_pos = self.get_register_pair(pair);
+                let data = self.memory.read_byte(memory_pos);
+                self.flags.c = data & 0x1 == 0x1;
+                let result = data >> 1 | data & 0x80;
+                self.memory.write_byte(memory_pos, result);
+                cycles = 4;
+                result
+            }
             _ => panic!("should not happen"),
         };
 
@@ -679,20 +658,17 @@ impl Cpu {
                 self.set_register(register, result);
                 result
             }
-            Operand::MemoryLocation(location) => match location {
-                MemoryLocation::RegisterPair(pair) => {
-                    let memory_pos = self.get_register_pair(pair);
-                    let data = self.memory.read_byte(memory_pos);
+            Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
+                let memory_pos = self.get_register_pair(pair);
+                let data = self.memory.read_byte(memory_pos);
 
-                    self.flags.c = data & 0x1 == 0x1;
-                    let result = data >> 1;
+                self.flags.c = data & 0x1 == 0x1;
+                let result = data >> 1;
 
-                    self.memory.write_byte(memory_pos, result);
-                    cycles = 4;
-                    result
-                }
-                _ => panic!("should not happen"),
-            },
+                self.memory.write_byte(memory_pos, result);
+                cycles = 4;
+                result
+            }
             _ => panic!("should not happen"),
         };
 
@@ -710,16 +686,12 @@ impl Cpu {
             Operand::Register(target) => {
                 self.flags.z = (self.get_register(target) >> bit) & 0x1 == 0x0;
             }
-
-            Operand::MemoryLocation(location) => match location {
-                MemoryLocation::RegisterPair(pair) => {
-                    let memory_pos = self.get_register_pair(pair);
-                    let data = self.memory.read_byte(memory_pos);
-                    self.flags.z = (data >> bit) & 0x1 == 0x0;
-                    cycles = 3;
-                }
-                _ => panic!("should not happen"),
-            },
+            Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
+                let memory_pos = self.get_register_pair(pair);
+                let data = self.memory.read_byte(memory_pos);
+                self.flags.z = (data >> bit) & 0x1 == 0x0;
+                cycles = 3;
+            }
             _ => panic!("should not happen"),
         }
 
@@ -737,16 +709,13 @@ impl Cpu {
                 self.set_register(target, self.get_register(target) & !(0x1 << bit));
             }
 
-            Operand::MemoryLocation(location) => match location {
-                MemoryLocation::RegisterPair(pair) => {
-                    let memory_pos = self.get_register_pair(pair);
-                    let data = self.memory.read_byte(memory_pos);
-                    self.memory.write_byte(memory_pos, data & !(0x1 << bit));
+            Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
+                let memory_pos = self.get_register_pair(pair);
+                let data = self.memory.read_byte(memory_pos);
+                self.memory.write_byte(memory_pos, data & !(0x1 << bit));
 
-                    cycles = 4;
-                }
-                _ => panic!("should not happen"),
-            },
+                cycles = 4;
+            }
             _ => panic!("should not happen"),
         }
 
@@ -761,16 +730,13 @@ impl Cpu {
                 self.set_register(target, self.get_register(target) | (0x1 << bit));
             }
 
-            Operand::MemoryLocation(location) => match location {
-                MemoryLocation::RegisterPair(pair) => {
-                    let memory_pos = self.get_register_pair(pair);
-                    let data = self.memory.read_byte(memory_pos);
-                    self.memory.write_byte(memory_pos, data | (0x1 << bit));
+            Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
+                let memory_pos = self.get_register_pair(pair);
+                let data = self.memory.read_byte(memory_pos);
+                self.memory.write_byte(memory_pos, data | (0x1 << bit));
 
-                    cycles = 4;
-                }
-                _ => panic!("should not happen"),
-            },
+                cycles = 4;
+            }
             _ => panic!("should not happen"),
         }
 
@@ -1034,21 +1000,18 @@ impl Cpu {
                 self.set_register_pair(pair, word);
                 cycles = 2;
             }
-            Operand::MemoryLocation(location) => match location {
-                MemoryLocation::RegisterPair(pair) => {
-                    let pos = self.get_register_pair(pair);
-                    let byte = self.memory.read_byte(pos);
-                    let result = byte.wrapping_add(1);
-                    self.memory.write_byte(pos, result);
+            Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
+                let pos = self.get_register_pair(pair);
+                let byte = self.memory.read_byte(pos);
+                let result = byte.wrapping_add(1);
+                self.memory.write_byte(pos, result);
 
-                    self.flags.z = result == 0;
-                    self.flags.n = false;
-                    self.flags.h = ((byte & 0x0F) + 0x1) & 0x10 == 0x10;
+                self.flags.z = result == 0;
+                self.flags.n = false;
+                self.flags.h = ((byte & 0x0F) + 0x1) & 0x10 == 0x10;
 
-                    cycles = 3;
-                }
-                _ => panic!("not implemented"),
-            },
+                cycles = 3;
+            }
             Operand::ImmediateOperand(_) => panic!("not implemented"),
             Operand::StackPointer(None) => {
                 self.sp = self.sp.wrapping_add(1);
@@ -1077,21 +1040,18 @@ impl Cpu {
                 self.set_register_pair(pair, word);
                 cycles = 2;
             }
-            Operand::MemoryLocation(location) => match location {
-                MemoryLocation::RegisterPair(pair) => {
-                    let byte = self
-                        .memory
-                        .read_byte(self.get_register_pair(pair))
-                        .wrapping_sub(1);
+            Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
+                let byte = self
+                    .memory
+                    .read_byte(self.get_register_pair(pair))
+                    .wrapping_sub(1);
 
-                    self.memory.write_byte(self.get_register_pair(pair), byte);
-                    self.flags.z = byte == 0;
-                    self.flags.n = true;
-                    self.flags.h = (byte & 0xF) == 0xF;
-                    cycles = 3;
-                }
-                _ => panic!("not implemented"),
-            },
+                self.memory.write_byte(self.get_register_pair(pair), byte);
+                self.flags.z = byte == 0;
+                self.flags.n = true;
+                self.flags.h = (byte & 0xF) == 0xF;
+                cycles = 3;
+            }
             Operand::ImmediateOperand(_) => panic!("not implemented"),
             Operand::StackPointer(None) => {
                 self.sp = self.sp.wrapping_sub(1);
@@ -1758,11 +1718,12 @@ impl Cpu {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use crate::cartridge::CartridgeHeader;
     use crate::cpu::{CpuState, STACK_START};
     use crate::memory::Memory;
     use crate::{Cartridge, Cpu, KeyState};
-    use std::sync::{Arc, Mutex};
 
     #[test]
     fn it_executes_call() {
