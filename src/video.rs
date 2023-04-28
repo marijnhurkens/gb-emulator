@@ -235,7 +235,6 @@ impl Video {
         }
     }
 
-
     fn draw_oam(&mut self) {
         let mut data = [0; OAM_SIZE as usize];
         self.oam.set_position(0);
