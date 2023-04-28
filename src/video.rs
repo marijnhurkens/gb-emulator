@@ -223,11 +223,18 @@ impl Video {
     }
 
     fn draw_line(&mut self) {
-        self.draw_background();
-        //  self.draw_window();
-        self.draw_oam();
-        // self.draw_tiles();
+        if self.lcd_control.contains(LcdControl::WINDOW_BG_DISPLAY) {
+            self.draw_background();
+            if self.lcd_control.contains(LcdControl::WINDOW_ENABLE) {
+                self.draw_window();
+            }
+        }
+
+        if self.lcd_control.contains(LcdControl::OBJ_ENABLE) {
+            self.draw_oam();
+        }
     }
+
 
     fn draw_oam(&mut self) {
         let mut data = [0; OAM_SIZE as usize];
@@ -253,6 +260,10 @@ impl Video {
         });
     }
 
+    /// This method draws the background tile map. The background is scrollable and will wrap
+    /// around if the visible portion goes outside of the map.
+    ///
+    /// todo: implement wrapping
     fn draw_background(&mut self) {
         self.vram
             .set_position((BACKGROUND_MAP_START - VRAM_START) as u64);
@@ -264,17 +275,15 @@ impl Video {
                 *tile_index,
                 !self.lcd_control.contains(LcdControl::WINDOW_BG_ADDRES_MODE),
             );
-            let anchor_x = (i as u64 % 32) * 8;
-            let anchor_y = (i as u64 / 32) * 8;
-
-            if anchor_x > SCREEN_WIDTH as u64 || anchor_y > SCREEN_HEIGHT as u64 {
-                return;
-            }
+            let anchor_x = ((i as u64 % 32) * 8) + self.scx as u64;
+            let anchor_y = ((i as u64 / 32) * 8) + self.scy as u64;
 
             self.draw_tile(tile, anchor_x as i64, anchor_y as i64);
         });
     }
 
+    /// The window is just tile map which can be drawn as a rectangle. It can be positioned
+    /// but it will not wrap around. It has no transparency so the use is limited.
     fn draw_window(&mut self) {
         self.vram
             .set_position((WINDOW_MAP_START - VRAM_START) as u64);
@@ -286,12 +295,8 @@ impl Video {
                 *tile_index,
                 !self.lcd_control.contains(LcdControl::WINDOW_BG_ADDRES_MODE),
             );
-            let anchor_x = (i as u64 % 32) * 8;
-            let anchor_y = (i as u64 / 32) * 8;
-
-            if anchor_x > SCREEN_WIDTH as u64 || anchor_y > SCREEN_HEIGHT as u64 {
-                return;
-            }
+            let anchor_x = ((i as u64 % 32) * 8) + self.window_x as u64 - 7;
+            let anchor_y = (i as u64 / 32) * 8 + self.window_y as u64;
 
             self.draw_tile(tile, anchor_x as i64, anchor_y as i64);
         });
@@ -306,8 +311,18 @@ impl Video {
         }
     }
 
+    /// This method draws a tile on the screen buffer. A tile is 8x8 pixels in size, and each pixel
+    /// can have 4 values. The values have different meanings when drawn as the BG/window or when
+    /// drawn as an object. Objects will use the value 0 for transparent pixels, whereas the BG and
+    /// window have no transparency.
+    ///
+    /// todo: implement transparency
     fn draw_tile(&mut self, tile: Tile, anchor_x: i64, anchor_y: i64) {
-        if anchor_x < -8 || anchor_y < -8 {
+        if anchor_x < -8
+            || anchor_y < -8
+            || anchor_x > SCREEN_WIDTH as i64
+            || anchor_y > SCREEN_HEIGHT as i64
+        {
             return;
         }
 

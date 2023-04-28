@@ -502,6 +502,7 @@ pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
     }
 }
 
+//noinspection RsNonExhaustiveMatch
 fn decode_cb(opcode: u8) -> InstructionCB {
     match opcode {
         0x00..=0x07 => {

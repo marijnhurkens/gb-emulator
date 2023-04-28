@@ -185,10 +185,6 @@ impl Memory {
     fn read_key_state(&mut self) -> u8 {
         let key_state = self.key_state.lock().unwrap();
 
-        // println!("{:#10b}",  ((!key_state.start as u8) << 3) |
-        //     ((!key_state.select as u8) << 2) |
-        //     ((!key_state.b as u8) << 1) |
-        //     (!key_state.a as u8));
         if self.buttons & 0x20 == 0x0 {
             self.buttons = (self.buttons & 0xf0)
                 | ((!key_state.start as u8) << 3)

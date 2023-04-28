@@ -68,6 +68,7 @@ impl CpuFlags {
 #[derive(Eq, PartialEq, Debug)]
 enum CpuState {
     Running,
+    Halted,
     Stopped,
 }
 
@@ -119,22 +120,9 @@ impl Cpu {
     }
 
     pub fn cycle(&mut self, screen_buffer: &Option<Arc<Mutex<ScreenBuffer>>>) {
-        // Catch PC out of bounds
         if self.pc as usize > 0xFFFF {
             panic!("PC out of bounds");
         }
-
-        self.current_opcode = Some(self.memory.read_byte(self.pc));
-        let (instruction, length) = decode(&mut self.memory, self.pc);
-        self.current_instruction = Some(instruction);
-
-        event!(
-            Level::DEBUG,
-            "{:#08X} | {:#04X} | {}",
-            self.pc,
-            self.memory.read_byte(self.pc),
-            instruction
-        );
 
         if let Some(break_point) = self.break_point {
             if break_point == self.pc {
@@ -142,9 +130,26 @@ impl Cpu {
             }
         }
 
-        self.pc = self.pc.wrapping_add(length);
+        let t_cycles = if self.state != CpuState::Halted {
+            self.current_opcode = Some(self.memory.read_byte(self.pc));
+            let (instruction, length) = decode(&mut self.memory, self.pc);
+            self.current_instruction = Some(instruction);
 
-        let t_cycles = self.process_instruction(instruction) * 4;
+            event!(
+                Level::DEBUG,
+                "{:#08X} | {:#04X} | {}",
+                self.pc,
+                self.memory.read_byte(self.pc),
+                instruction
+            );
+
+            self.pc = self.pc.wrapping_add(length);
+
+            self.process_instruction(instruction) * 4
+        } else {
+            4
+        };
+
         // self.log_doctor();
 
         for _ in 0..t_cycles {
@@ -152,6 +157,15 @@ impl Cpu {
 
             let interrupt_flags = self.memory.video.step(self.memory.interrupt_flags);
             self.memory.interrupt_flags = interrupt_flags;
+
+            // When an interrupt is requested we wake from HALT, handle the interrupt ife IME is set,
+            // and then continue with the next instruction.
+            if (self.memory.interrupt_flags & self.memory.interrupt_enable
+                != InterruptFlags::empty())
+                && self.state == CpuState::Halted
+            {
+                self.state = CpuState::Running;
+            }
 
             // INTERRUPTS
             if self.interrupts_enabled {
@@ -227,6 +241,24 @@ impl Cpu {
                     event!(Level::DEBUG, "INT 50 TIMER | {:#08X}", address);
                     self.pc = address;
                 }
+
+                if self.memory.interrupt_flags.contains(InterruptFlags::JOYPAD)
+                    && self
+                        .memory
+                        .interrupt_enable
+                        .contains(InterruptFlags::JOYPAD)
+                {
+                    self.interrupts_enabled = false;
+                    let interrupt_flags =
+                        InterruptFlags::from_bits(self.memory.read_byte(0xFF0F)).unwrap();
+                    self.memory
+                        .write_byte(0xFF0F, (interrupt_flags - InterruptFlags::JOYPAD).bits());
+
+                    self.push_word(self.pc);
+                    let address = 0x0060;
+                    event!(Level::DEBUG, "INT 60 JOYPAD | {:#08X}", address);
+                    self.pc = address;
+                }
             }
         }
 
@@ -239,7 +271,10 @@ impl Cpu {
     fn process_instruction(&mut self, instruction: Instruction) -> usize {
         let m_cycles = match instruction {
             Instruction::NOP => 1,
-            Instruction::HALT => 0,
+            Instruction::HALT => {
+                self.state = CpuState::Halted;
+                1
+            }
             Instruction::INC(operand) => self.increment(operand),
             Instruction::DEC(operand) => self.decrement(operand),
             Instruction::LD(load) => self.ld(load),
