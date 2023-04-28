@@ -7,6 +7,7 @@ use byteorder::{ReadBytesExt, WriteBytesExt};
 use tracing::{event, Level};
 
 use crate::cpu::CPU_FREQ;
+use crate::mbc::Mbc;
 use crate::video::{LcdControl, LcdStatus, Video, VRAM_START};
 use crate::KeyState;
 
@@ -36,10 +37,9 @@ bitflags! {
     }
 }
 
-#[derive(Debug)]
-pub struct Memory {
+pub struct MMU {
+    mbc: Box<dyn Mbc>,
     storage: Cursor<Vec<u8>>,
-    rom: Vec<u8>,
     pub video: Video,
     pub interrupt_flags: InterruptFlags,
     pub interrupt_enable: InterruptFlags,
@@ -57,10 +57,10 @@ pub struct Memory {
     key_state: Arc<Mutex<KeyState>>,
 }
 
-impl Memory {
-    pub fn new(rom: Vec<u8>, key_state: Arc<Mutex<KeyState>>) -> Self {
+impl MMU {
+    pub fn new(mbc: Box<dyn Mbc>, key_state: Arc<Mutex<KeyState>>) -> Self {
         Self {
-            rom,
+            mbc,
             video: Video::new(),
             key_state,
             storage: Cursor::new(vec![0x0; MEM_SIZE]),
@@ -82,20 +82,17 @@ impl Memory {
 
     pub fn read_byte(&mut self, pos: u16) -> u8 {
         match pos {
-            0x0000..=0x3FFF => {
-                // Memory bank 0
-                self.read_byte_from_rom(pos)
-            }
-            0x4000..=0x7FFF => {
-                // Switchable memory bank 01..max, todo
-                self.read_byte_from_rom(pos)
-            }
+            0x0000..=0x7FFF => self.mbc.read_rom(pos),
             VRAM_START..=0x9FFF => self.video.read_byte(pos),
             0xA000..=0xBFFF => self.read_byte_from_storage(pos),
             0xC000..=0xCFFF => self.read_byte_from_storage(pos),
             0xD000..=0xDFFF => self.read_byte_from_storage(pos),
             0xE000..=0xFDFF => self.read_byte_from_storage(pos - 0x2000),
             0xFE00..=0xFE9F => self.video.read_byte_oam(pos),
+            0xFEA0..=0xFEFF => {
+                event!(Level::ERROR, "Prohibited memory access");
+                panic!();
+            }
             0xFF00..=0xFF07 => self.read_io_register(pos),
             0xFF30..=0xFF3F => self.read_io_register(pos),
             0xFF0F => self.interrupt_flags.bits,
@@ -116,10 +113,6 @@ impl Memory {
         self.storage.read_u8().unwrap()
     }
 
-    fn read_byte_from_rom(&self, pos: u16) -> u8 {
-        self.rom[pos as usize]
-    }
-
     pub fn write_byte(&mut self, pos: u16, byte: u8) {
         event!(
             Level::DEBUG,
@@ -128,7 +121,7 @@ impl Memory {
             pos
         );
         match pos {
-            0x0000..=0x7FFF => (), //self.write_byte_to_storage(pos, byte), //print!("write rom, not implemented |"),
+            0x0000..=0x7FFF => self.mbc.write_rom(pos, byte),
             VRAM_START..=0x9FFF => self.video.write_byte(pos, byte),
             0xA000..=0xBFFF => self.write_byte_to_storage(pos, byte), // ??
             0xC000..=0xDFFF => self.write_byte_to_storage(pos, byte), // wram

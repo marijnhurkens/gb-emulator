@@ -3,7 +3,7 @@ use std::io::{Cursor, Read, Write};
 use bitflags::bitflags;
 use byteorder::{ReadBytesExt, WriteBytesExt};
 
-use crate::memory::InterruptFlags;
+use crate::mmu::InterruptFlags;
 use crate::{helpers, SCREEN_BUFFER_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 pub const VRAM_START: u16 = 0x8000;
@@ -84,6 +84,12 @@ bitflags! {
         const Y_FLIP                = 0b01000000;
         const X_FLIP                = 0b00100000;
         const PALETTE               = 0b00010000;
+    }
+}
+
+impl LcdStatus {
+    pub fn get_video_mode(self) -> u8 {
+        (self & LcdStatus::ALL_MODE_FLAGS).bits
     }
 }
 

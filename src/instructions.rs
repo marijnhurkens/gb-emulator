@@ -1,9 +1,9 @@
 use std::fmt::{Display, Formatter};
 
 use crate::helpers;
-use crate::memory::Memory;
+use crate::mmu::MMU;
 
-pub fn decode(memory: &mut Memory, pc: u16) -> (Instruction, u16) {
+pub fn decode(memory: &mut MMU, pc: u16) -> (Instruction, u16) {
     let opcode = memory.read_byte(pc);
 
     match opcode {

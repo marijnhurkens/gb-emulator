@@ -7,18 +7,16 @@ use std::time::{Duration, Instant};
 use bitvec::macros::internal::funty::Fundamental;
 use tracing::{event, Level};
 
-use crate::cartridge::Cartridge;
 use crate::instructions::{
     decode, Add, Condition, ImmediateOperand, Instruction, InstructionCB, Load, MemoryLocation,
     Operand, Register, RegisterPair,
 };
-use crate::memory::{InterruptFlags, Memory};
+use crate::mmu::{InterruptFlags, MMU};
 use crate::ScreenBuffer;
 
 pub const CPU_FREQ: f64 = 4_194_304.0;
 const STACK_START: u16 = 0xfffe;
 
-#[derive(Debug)]
 pub struct Cpu {
     pc: u16,
     sp: u16,
@@ -31,8 +29,7 @@ pub struct Cpu {
     l: u8,
     flags: CpuFlags,
     interrupts_enabled: bool,
-    memory: Memory,
-    cartridge: Cartridge,
+    mmu: MMU,
     state: CpuState,
     break_point: Option<u16>,
     current_opcode: Option<u8>,
@@ -73,7 +70,7 @@ enum CpuState {
 }
 
 impl Cpu {
-    pub fn load_cartridge(cartridge: Cartridge, memory: Memory) -> Self {
+    pub fn new(mmu: MMU) -> Self {
         Cpu {
             pc: 0x0100,
             sp: STACK_START,
@@ -91,8 +88,7 @@ impl Cpu {
                 h: true,
             },
             interrupts_enabled: false,
-            memory,
-            cartridge,
+            mmu,
             state: CpuState::Stopped,
             break_point: None,
             current_opcode: None,
@@ -106,9 +102,6 @@ impl Cpu {
         screen_buffer: Option<Arc<Mutex<ScreenBuffer>>>,
         break_point: Option<u16>,
     ) {
-        let title = &self.cartridge.header.title;
-        event!(Level::INFO, "Running {:}", title);
-
         self.break_point = break_point;
         self.state = CpuState::Running;
 
@@ -131,15 +124,15 @@ impl Cpu {
         }
 
         let t_cycles = if self.state != CpuState::Halted {
-            self.current_opcode = Some(self.memory.read_byte(self.pc));
-            let (instruction, length) = decode(&mut self.memory, self.pc);
+            self.current_opcode = Some(self.mmu.read_byte(self.pc));
+            let (instruction, length) = decode(&mut self.mmu, self.pc);
             self.current_instruction = Some(instruction);
 
             event!(
                 Level::DEBUG,
                 "{:#08X} | {:#04X} | {}",
                 self.pc,
-                self.memory.read_byte(self.pc),
+                self.mmu.read_byte(self.pc),
                 instruction
             );
 
@@ -153,15 +146,14 @@ impl Cpu {
         // self.log_doctor();
 
         for _ in 0..t_cycles {
-            self.memory.step();
+            self.mmu.step();
 
-            let interrupt_flags = self.memory.video.step(self.memory.interrupt_flags);
-            self.memory.interrupt_flags = interrupt_flags;
+            let interrupt_flags = self.mmu.video.step(self.mmu.interrupt_flags);
+            self.mmu.interrupt_flags = interrupt_flags;
 
             // When an interrupt is requested we wake from HALT, handle the interrupt ife IME is set,
             // and then continue with the next instruction.
-            if (self.memory.interrupt_flags & self.memory.interrupt_enable
-                != InterruptFlags::empty())
+            if (self.mmu.interrupt_flags & self.mmu.interrupt_enable != InterruptFlags::empty())
                 && self.state == CpuState::Halted
             {
                 self.state = CpuState::Running;
@@ -169,23 +161,20 @@ impl Cpu {
 
             // INTERRUPTS
             if self.interrupts_enabled {
-                if self.memory.interrupt_flags.contains(InterruptFlags::VBLANK)
-                    && self
-                        .memory
-                        .interrupt_enable
-                        .contains(InterruptFlags::VBLANK)
+                if self.mmu.interrupt_flags.contains(InterruptFlags::VBLANK)
+                    && self.mmu.interrupt_enable.contains(InterruptFlags::VBLANK)
                 {
                     // Draw to screen
                     if let Some(buffer) = &screen_buffer {
                         let mut guard = buffer.lock().unwrap();
-                        (*guard) = self.memory.video.read_screen_buffer();
+                        (*guard) = self.mmu.video.read_screen_buffer();
                         drop(guard);
                     }
 
                     self.interrupts_enabled = false;
                     let interrupt_flags =
-                        InterruptFlags::from_bits(self.memory.read_byte(0xFF0F)).unwrap();
-                    self.memory
+                        InterruptFlags::from_bits(self.mmu.read_byte(0xFF0F)).unwrap();
+                    self.mmu
                         .write_byte(0xFF0F, (interrupt_flags - InterruptFlags::VBLANK).bits());
 
                     self.push_word(self.pc);
@@ -206,19 +195,13 @@ impl Cpu {
                     self.frame_start = Instant::now();
                 }
 
-                if self
-                    .memory
-                    .interrupt_flags
-                    .contains(InterruptFlags::LCD_STAT)
-                    && self
-                        .memory
-                        .interrupt_enable
-                        .contains(InterruptFlags::LCD_STAT)
+                if self.mmu.interrupt_flags.contains(InterruptFlags::LCD_STAT)
+                    && self.mmu.interrupt_enable.contains(InterruptFlags::LCD_STAT)
                 {
                     self.interrupts_enabled = false;
                     let interrupt_flags =
-                        InterruptFlags::from_bits(self.memory.read_byte(0xFF0F)).unwrap();
-                    self.memory
+                        InterruptFlags::from_bits(self.mmu.read_byte(0xFF0F)).unwrap();
+                    self.mmu
                         .write_byte(0xFF0F, (interrupt_flags - InterruptFlags::LCD_STAT).bits());
 
                     self.push_word(self.pc);
@@ -227,13 +210,13 @@ impl Cpu {
                     self.pc = address;
                 }
 
-                if self.memory.interrupt_flags.contains(InterruptFlags::TIMER)
-                    && self.memory.interrupt_enable.contains(InterruptFlags::TIMER)
+                if self.mmu.interrupt_flags.contains(InterruptFlags::TIMER)
+                    && self.mmu.interrupt_enable.contains(InterruptFlags::TIMER)
                 {
                     self.interrupts_enabled = false;
                     let interrupt_flags =
-                        InterruptFlags::from_bits(self.memory.read_byte(0xFF0F)).unwrap();
-                    self.memory
+                        InterruptFlags::from_bits(self.mmu.read_byte(0xFF0F)).unwrap();
+                    self.mmu
                         .write_byte(0xFF0F, (interrupt_flags - InterruptFlags::TIMER).bits());
 
                     self.push_word(self.pc);
@@ -242,16 +225,13 @@ impl Cpu {
                     self.pc = address;
                 }
 
-                if self.memory.interrupt_flags.contains(InterruptFlags::JOYPAD)
-                    && self
-                        .memory
-                        .interrupt_enable
-                        .contains(InterruptFlags::JOYPAD)
+                if self.mmu.interrupt_flags.contains(InterruptFlags::JOYPAD)
+                    && self.mmu.interrupt_enable.contains(InterruptFlags::JOYPAD)
                 {
                     self.interrupts_enabled = false;
                     let interrupt_flags =
-                        InterruptFlags::from_bits(self.memory.read_byte(0xFF0F)).unwrap();
-                    self.memory
+                        InterruptFlags::from_bits(self.mmu.read_byte(0xFF0F)).unwrap();
+                    self.mmu
                         .write_byte(0xFF0F, (interrupt_flags - InterruptFlags::JOYPAD).bits());
 
                     self.push_word(self.pc);
@@ -262,7 +242,7 @@ impl Cpu {
             }
         }
 
-        self.memory.handle_serial();
+        self.mmu.handle_serial();
     }
 
     /**
@@ -484,9 +464,9 @@ impl Cpu {
             }
             Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
                 let memory_pos = self.get_register_pair(pair);
-                let data = self.memory.read_byte(memory_pos);
+                let data = self.mmu.read_byte(memory_pos);
                 let result = ((data & 0b00001111) << 4) | (data >> 4);
-                self.memory.write_byte(memory_pos, result);
+                self.mmu.write_byte(memory_pos, result);
                 cycles = 4;
                 result
             }
@@ -513,10 +493,10 @@ impl Cpu {
             }
             Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
                 let memory_pos = self.get_register_pair(pair);
-                let data = self.memory.read_byte(memory_pos);
+                let data = self.mmu.read_byte(memory_pos);
                 self.flags.c = data & 0x01 == 0x1;
                 let result = (data >> 1) | (self.flags.c as u8) << 7;
-                self.memory.write_byte(memory_pos, result);
+                self.mmu.write_byte(memory_pos, result);
                 cycles = 4;
                 result
             }
@@ -542,10 +522,10 @@ impl Cpu {
             }
             Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
                 let memory_pos = self.get_register_pair(pair);
-                let data = self.memory.read_byte(memory_pos);
+                let data = self.mmu.read_byte(memory_pos);
                 self.flags.c = data >> 7 == 0x1;
                 let result = (data << 1) | self.flags.c as u8;
-                self.memory.write_byte(memory_pos, result);
+                self.mmu.write_byte(memory_pos, result);
                 cycles = 4;
                 result
             }
@@ -572,13 +552,13 @@ impl Cpu {
             }
             Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
                 let memory_pos = self.get_register_pair(pair);
-                let data = self.memory.read_byte(memory_pos);
+                let data = self.mmu.read_byte(memory_pos);
 
                 let carry_prev = self.flags.c as u8;
                 self.flags.c = data >> 7 == 0x1;
                 let result = (data << 1) | carry_prev;
 
-                self.memory.write_byte(memory_pos, result);
+                self.mmu.write_byte(memory_pos, result);
                 cycles = 4;
                 result
             }
@@ -605,13 +585,13 @@ impl Cpu {
             }
             Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
                 let memory_pos = self.get_register_pair(pair);
-                let data = self.memory.read_byte(memory_pos);
+                let data = self.mmu.read_byte(memory_pos);
 
                 let carry_prev = self.flags.c as u8;
                 self.flags.c = data & 0x1 == 0x1;
                 let result = (data >> 1) | carry_prev << 7;
 
-                self.memory.write_byte(memory_pos, result);
+                self.mmu.write_byte(memory_pos, result);
                 cycles = 4;
                 result
             }
@@ -637,10 +617,10 @@ impl Cpu {
             }
             Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
                 let memory_pos = self.get_register_pair(pair);
-                let data = self.memory.read_byte(memory_pos);
+                let data = self.mmu.read_byte(memory_pos);
                 self.flags.c = data >> 7 == 0x1;
                 let result = data << 1;
-                self.memory.write_byte(memory_pos, result);
+                self.mmu.write_byte(memory_pos, result);
                 cycles = 4;
                 result
             }
@@ -666,10 +646,10 @@ impl Cpu {
             }
             Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
                 let memory_pos = self.get_register_pair(pair);
-                let data = self.memory.read_byte(memory_pos);
+                let data = self.mmu.read_byte(memory_pos);
                 self.flags.c = data & 0x1 == 0x1;
                 let result = data >> 1 | data & 0x80;
-                self.memory.write_byte(memory_pos, result);
+                self.mmu.write_byte(memory_pos, result);
                 cycles = 4;
                 result
             }
@@ -695,12 +675,12 @@ impl Cpu {
             }
             Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
                 let memory_pos = self.get_register_pair(pair);
-                let data = self.memory.read_byte(memory_pos);
+                let data = self.mmu.read_byte(memory_pos);
 
                 self.flags.c = data & 0x1 == 0x1;
                 let result = data >> 1;
 
-                self.memory.write_byte(memory_pos, result);
+                self.mmu.write_byte(memory_pos, result);
                 cycles = 4;
                 result
             }
@@ -723,7 +703,7 @@ impl Cpu {
             }
             Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
                 let memory_pos = self.get_register_pair(pair);
-                let data = self.memory.read_byte(memory_pos);
+                let data = self.mmu.read_byte(memory_pos);
                 self.flags.z = (data >> bit) & 0x1 == 0x0;
                 cycles = 3;
             }
@@ -746,8 +726,8 @@ impl Cpu {
 
             Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
                 let memory_pos = self.get_register_pair(pair);
-                let data = self.memory.read_byte(memory_pos);
-                self.memory.write_byte(memory_pos, data & !(0x1 << bit));
+                let data = self.mmu.read_byte(memory_pos);
+                self.mmu.write_byte(memory_pos, data & !(0x1 << bit));
 
                 cycles = 4;
             }
@@ -767,8 +747,8 @@ impl Cpu {
 
             Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
                 let memory_pos = self.get_register_pair(pair);
-                let data = self.memory.read_byte(memory_pos);
-                self.memory.write_byte(memory_pos, data | (0x1 << bit));
+                let data = self.mmu.read_byte(memory_pos);
+                self.mmu.write_byte(memory_pos, data | (0x1 << bit));
 
                 cycles = 4;
             }
@@ -790,17 +770,17 @@ impl Cpu {
                     Operand::MemoryLocation(memory_location) => match memory_location {
                         MemoryLocation::RegisterPair(pair) => {
                             let location = self.get_register_pair(pair);
-                            self.memory.write_byte(location, source_data);
+                            self.mmu.write_byte(location, source_data);
                             2
                         }
                         MemoryLocation::ImmediateOperand(operand) => match operand {
                             ImmediateOperand::A8(operand) => {
-                                self.memory
+                                self.mmu
                                     .write_byte(u16::from_le_bytes([operand, 0xff]), source_data);
                                 3
                             }
                             ImmediateOperand::A16(operand) => {
-                                self.memory.write_byte(operand, source_data);
+                                self.mmu.write_byte(operand, source_data);
                                 4
                             }
                             _ => panic!("not implemented"),
@@ -808,19 +788,19 @@ impl Cpu {
                         MemoryLocation::HLplus => {
                             let pair = RegisterPair(Register::H, Register::L);
                             let location = self.get_register_pair(pair);
-                            self.memory.write_byte(location, source_data);
+                            self.mmu.write_byte(location, source_data);
                             self.set_register_pair(pair, location.overflowing_add(1).0);
                             2
                         }
                         MemoryLocation::HLmin => {
                             let pair = RegisterPair(Register::H, Register::L);
                             let location = self.get_register_pair(pair);
-                            self.memory.write_byte(location, source_data);
+                            self.mmu.write_byte(location, source_data);
                             self.set_register_pair(pair, location.overflowing_sub(1).0);
                             2
                         }
                         MemoryLocation::Register(register) => {
-                            self.memory.write_byte(
+                            self.mmu.write_byte(
                                 u16::from_le_bytes([self.get_register(register), 0xFF]),
                                 source_data,
                             );
@@ -833,7 +813,7 @@ impl Cpu {
             Operand::MemoryLocation(memory_location) => match memory_location {
                 MemoryLocation::ImmediateOperand(operand) => match operand {
                     ImmediateOperand::A8(operand) => {
-                        let data = self.memory.read_byte(u16::from_le_bytes([operand, 0xff]));
+                        let data = self.mmu.read_byte(u16::from_le_bytes([operand, 0xff]));
                         match load.target {
                             Operand::Register(register) => {
                                 self.set_register(register, data);
@@ -843,7 +823,7 @@ impl Cpu {
                         }
                     }
                     ImmediateOperand::A16(operand) => {
-                        let data = self.memory.read_byte(operand);
+                        let data = self.mmu.read_byte(operand);
                         match load.target {
                             Operand::Register(register) => {
                                 self.set_register(register, data);
@@ -855,7 +835,7 @@ impl Cpu {
                     _ => panic!("not implemented"),
                 },
                 MemoryLocation::RegisterPair(register_pair) => {
-                    let data = self.memory.read_byte(self.get_register_pair(register_pair));
+                    let data = self.mmu.read_byte(self.get_register_pair(register_pair));
                     match load.target {
                         Operand::Register(register) => {
                             self.set_register(register, data);
@@ -867,7 +847,7 @@ impl Cpu {
                 MemoryLocation::HLplus => {
                     let register_pair = RegisterPair(Register::H, Register::L);
                     let memory_location = self.get_register_pair(register_pair);
-                    let data = self.memory.read_byte(memory_location);
+                    let data = self.mmu.read_byte(memory_location);
                     self.set_register_pair(register_pair, memory_location.wrapping_add(1));
                     match load.target {
                         Operand::Register(register) => {
@@ -880,7 +860,7 @@ impl Cpu {
                 MemoryLocation::HLmin => {
                     let register_pair = RegisterPair(Register::H, Register::L);
                     let memory_location = self.get_register_pair(register_pair);
-                    let data = self.memory.read_byte(memory_location);
+                    let data = self.mmu.read_byte(memory_location);
                     self.set_register_pair(register_pair, memory_location.wrapping_sub(1));
                     match load.target {
                         Operand::Register(register) => {
@@ -893,7 +873,7 @@ impl Cpu {
                 MemoryLocation::Register(source_register) => {
                     let memory_location = self.get_register(source_register);
                     let data = self
-                        .memory
+                        .mmu
                         .read_byte(u16::from_le_bytes([memory_location, 0xff]));
                     match load.target {
                         Operand::Register(register) => {
@@ -921,7 +901,7 @@ impl Cpu {
                     2
                 }
                 Operand::MemoryLocation(MemoryLocation::RegisterPair(register_pair)) => {
-                    self.memory
+                    self.mmu
                         .write_byte(self.get_register_pair(register_pair), operand);
                     3
                 }
@@ -953,7 +933,7 @@ impl Cpu {
             },
             Operand::StackPointer(None) => match load.target {
                 Operand::ImmediateOperand(ImmediateOperand::A16(operand)) => {
-                    self.memory.write_word(operand, self.sp);
+                    self.mmu.write_word(operand, self.sp);
                     5
                 }
                 _ => panic!("not implemented"),
@@ -974,20 +954,6 @@ impl Cpu {
         }
     }
 
-    /** Increments program counter */
-    fn next_byte(&mut self) -> u8 {
-        self.pc += 1;
-        self.cartridge.data[self.pc as usize]
-    }
-
-    /** Increments program counter twice */
-    fn next_word(&mut self) -> [u8; 2] {
-        let a = self.next_byte();
-        let b = self.next_byte();
-
-        [a, b]
-    }
-
     fn push(&mut self, source: RegisterPair) -> usize {
         self.push_word(self.get_register_pair(source));
         4
@@ -1001,17 +967,16 @@ impl Cpu {
 
     fn push_word(&mut self, word: u16) {
         self.sp -= 1;
-        self.memory
-            .write_byte(self.sp, ((word & 0xFF00) >> 8) as u8);
+        self.mmu.write_byte(self.sp, ((word & 0xFF00) >> 8) as u8);
 
         self.sp -= 1;
-        self.memory.write_byte(self.sp, (word & 0xFF) as u8);
+        self.mmu.write_byte(self.sp, (word & 0xFF) as u8);
     }
 
     fn pop_word(&mut self) -> u16 {
-        let data_low = self.memory.read_byte(self.sp) as u16;
+        let data_low = self.mmu.read_byte(self.sp) as u16;
         self.sp += 1;
-        let data_high = self.memory.read_byte(self.sp) as u16;
+        let data_high = self.mmu.read_byte(self.sp) as u16;
         self.sp += 1;
 
         data_low | (data_high << 8)
@@ -1037,9 +1002,9 @@ impl Cpu {
             }
             Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
                 let pos = self.get_register_pair(pair);
-                let byte = self.memory.read_byte(pos);
+                let byte = self.mmu.read_byte(pos);
                 let result = byte.wrapping_add(1);
-                self.memory.write_byte(pos, result);
+                self.mmu.write_byte(pos, result);
 
                 self.flags.z = result == 0;
                 self.flags.n = false;
@@ -1077,11 +1042,11 @@ impl Cpu {
             }
             Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
                 let byte = self
-                    .memory
+                    .mmu
                     .read_byte(self.get_register_pair(pair))
                     .wrapping_sub(1);
 
-                self.memory.write_byte(self.get_register_pair(pair), byte);
+                self.mmu.write_byte(self.get_register_pair(pair), byte);
                 self.flags.z = byte == 0;
                 self.flags.n = true;
                 self.flags.h = (byte & 0xF) == 0xF;
@@ -1103,7 +1068,7 @@ impl Cpu {
             Operand::Register(source) => (self.get_register(source), 1),
             Operand::MemoryLocation(location) => match location {
                 MemoryLocation::RegisterPair(pair) => {
-                    (self.memory.read_byte(self.get_register_pair(pair)), 2)
+                    (self.mmu.read_byte(self.get_register_pair(pair)), 2)
                 }
                 _ => panic!("Should not happen"),
             },
@@ -1129,7 +1094,7 @@ impl Cpu {
             Operand::Register(source) => (self.get_register(source), 1),
             Operand::MemoryLocation(location) => match location {
                 MemoryLocation::RegisterPair(pair) => {
-                    (self.memory.read_byte(self.get_register_pair(pair)), 2)
+                    (self.mmu.read_byte(self.get_register_pair(pair)), 2)
                 }
                 _ => panic!("not implemented"),
             }, // 2 cycles
@@ -1153,7 +1118,7 @@ impl Cpu {
             Operand::Register(source) => (self.get_register(source), 1),
             Operand::MemoryLocation(location) => match location {
                 MemoryLocation::RegisterPair(pair) => {
-                    (self.memory.read_byte(self.get_register_pair(pair)), 2)
+                    (self.mmu.read_byte(self.get_register_pair(pair)), 2)
                 }
                 _ => panic!("should not happend"),
             },
@@ -1195,7 +1160,7 @@ impl Cpu {
                 MemoryLocation::RegisterPair(pair) => {
                     cycles = 2;
                     let location = self.get_register_pair(pair);
-                    self.memory.read_byte(location)
+                    self.mmu.read_byte(location)
                 }
                 _ => panic!("should not happen"),
             },
@@ -1229,7 +1194,7 @@ impl Cpu {
                 MemoryLocation::RegisterPair(pair) => {
                     cycles = 2;
                     let location = self.get_register_pair(pair);
-                    self.memory.read_byte(location)
+                    self.mmu.read_byte(location)
                 }
                 _ => panic!("should not happen"),
             },
@@ -1307,8 +1272,7 @@ impl Cpu {
                     Operand::Register(target_register) => {
                         cycles = 2;
                         let current_register = self.get_register(target_register);
-                        let source_data =
-                            self.memory.read_byte(self.get_register_pair(source_pair));
+                        let source_data = self.mmu.read_byte(self.get_register_pair(source_pair));
                         let result = current_register as u32 + source_data as u32;
                         self.flags.h =
                             ((current_register & 0x0F) + (source_data & 0x0F)) & 0x10 == 0x10;
@@ -1403,7 +1367,7 @@ impl Cpu {
                     cycles = 2;
 
                     let current_register = self.a;
-                    let source_data = self.memory.read_byte(self.get_register_pair(source_pair));
+                    let source_data = self.mmu.read_byte(self.get_register_pair(source_pair));
                     let result = current_register as u16 + source_data as u16 + self.flags.c as u16;
                     self.flags.h =
                         ((current_register & 0x0F) + (source_data & 0x0F) + self.flags.c as u8)
@@ -1448,7 +1412,7 @@ impl Cpu {
             Operand::MemoryLocation(MemoryLocation::RegisterPair(pair)) => {
                 cycles = 2;
                 let pos = self.get_register_pair(pair);
-                self.memory.read_byte(pos)
+                self.mmu.read_byte(pos)
             }
             _ => panic!("not implemented"),
         };
@@ -1640,34 +1604,34 @@ impl Cpu {
         event!(
             Level::ERROR,
             "Interrupt enable flags: {:?}",
-            self.memory.interrupt_enable
+            self.mmu.interrupt_enable
         );
         event!(
             Level::ERROR,
             "Interrupt flags: {:?}",
-            self.memory.interrupt_flags
+            self.mmu.interrupt_flags
         );
     }
 
     fn debug_video(&self) {
         event!(Level::ERROR, "--------- VIDEO -----------");
-        event!(Level::ERROR, "Video mode: {:?}", self.memory.video.mode);
+        event!(Level::ERROR, "Video mode: {:?}", self.mmu.video.mode);
         event!(
             Level::ERROR,
             "Video lcd control: {:?}",
-            self.memory.video.lcd_control
+            self.mmu.video.lcd_control
         );
         event!(
             Level::ERROR,
             "Video lcd status: {:?}",
-            self.memory.video.lcd_status
+            self.mmu.video.lcd_status
         );
     }
 
     fn debug_stack(&mut self) {
         event!(Level::ERROR, "--- STACK START ---");
         for i in self.sp..=STACK_START {
-            event!(Level::ERROR, "{:#04X}", self.memory.read_byte(i));
+            event!(Level::ERROR, "{:#04X}", self.mmu.read_byte(i));
         }
         event!(Level::ERROR, "--- STACK END ---");
     }
@@ -1743,10 +1707,10 @@ impl Cpu {
             self.l,
             self.sp,
             self.pc,
-            self.memory.read_byte(self.pc),
-            self.memory.read_byte(self.pc+1),
-            self.memory.read_byte(self.pc+2),
-            self.memory.read_byte(self.pc+3),
+            self.mmu.read_byte(self.pc),
+            self.mmu.read_byte(self.pc+1),
+            self.mmu.read_byte(self.pc+2),
+            self.mmu.read_byte(self.pc+3),
         );
     }
 }
@@ -1757,8 +1721,8 @@ mod tests {
 
     use crate::cartridge::CartridgeHeader;
     use crate::cpu::{CpuState, STACK_START};
-    use crate::memory::Memory;
-    use crate::{Cartridge, Cpu, KeyState};
+    use crate::mmu::MMU;
+    use crate::{mbc, Cartridge, Cpu, KeyState};
 
     #[test]
     fn it_executes_call() {
@@ -1770,12 +1734,12 @@ mod tests {
             data: vec![0xCD, 0x03, 0x00],
         };
 
-        let memory = Memory::new(
-            cartridge.data.clone(),
+        let memory = MMU::new(
+            mbc::from_cartridge(cartridge),
             Arc::new(Mutex::new(KeyState::default())),
         );
 
-        let mut cpu = Cpu::load_cartridge(cartridge, memory);
+        let mut cpu = Cpu::new(memory);
         cpu.state = CpuState::Running;
         cpu.pc = 0;
         cpu.cycle(&None);
@@ -1794,12 +1758,12 @@ mod tests {
             data: vec![0xCD, 0x04, 0x00, 0x00, 0xC9],
         };
 
-        let memory = Memory::new(
-            cartridge.data.clone(),
+        let memory = MMU::new(
+            mbc::from_cartridge(cartridge),
             Arc::new(Mutex::new(KeyState::default())),
         );
 
-        let mut cpu = Cpu::load_cartridge(cartridge, memory);
+        let mut cpu = Cpu::new(memory);
         cpu.state = CpuState::Running;
         cpu.pc = 0;
         cpu.cycle(&None);

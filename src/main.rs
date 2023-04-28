@@ -22,13 +22,14 @@ use tracing_subscriber::Registry;
 
 use crate::cartridge::Cartridge;
 use crate::cpu::Cpu;
-use crate::memory::Memory;
+use crate::mmu::MMU;
 
 mod cartridge;
 mod cpu;
 mod helpers;
 mod instructions;
-mod memory;
+mod mbc;
+mod mmu;
 mod video;
 
 const SCREEN_WIDTH: u32 = 160;
@@ -113,8 +114,9 @@ fn main() {
     let cpu_screen_buffer = screen_buffer.clone();
     let key_state = Arc::new(Mutex::new(KeyState::default()));
 
-    let memory = Memory::new(data, key_state.clone());
-    let mut cpu = Cpu::load_cartridge(cartridge, memory);
+    let mbc = mbc::from_cartridge(cartridge);
+    let mmu = MMU::new(mbc, key_state.clone());
+    let mut cpu = Cpu::new(mmu);
 
     let break_point = args
         .break_point
