@@ -91,7 +91,7 @@ impl MMU {
             0xFE00..=0xFE9F => self.video.read_byte_oam(pos),
             0xFEA0..=0xFEFF => {
                 event!(Level::ERROR, "Prohibited memory access {:#04X}", pos);
-                 0xFF
+                0xFF
             }
             0xFF00..=0xFF02 => self.read_io_register(pos),
             0xFF04..=0xFF07 => self.read_io_register(pos),
@@ -266,7 +266,10 @@ impl MMU {
             0xFF49 => self.video.obj_1_palette = byte,
             0xFF4A => self.video.window_y = byte,
             0xFF4B => self.video.window_x = byte,
-            0xFF4D => event!(Level::WARN, "KEY1 prepare speed switch (CGB only) not supported"),
+            0xFF4D => event!(
+                Level::WARN,
+                "KEY1 prepare speed switch (CGB only) not supported"
+            ),
             0xFF4F => self.video.bank_select = byte,
             0xFF50 => event!(Level::WARN, "Disable boot rom, not implemented"),
             _ => {

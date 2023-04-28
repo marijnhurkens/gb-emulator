@@ -51,8 +51,8 @@ impl Mbc for Mbc1 {
             }
             0x4000..=0x5FFF => {
                 panic!();
-                self.rom_bank = self.rom_bank & 0x1F | ((val & 0x03) << 5) as u16
-            },
+                // self.rom_bank = self.rom_bank & 0x1F | ((val & 0x03) << 5) as u16
+            }
             0x6000..=0x7FFF => {
                 panic!("not implemented");
                 // self.ram_mode = (v & 0x01) == 0x01;
