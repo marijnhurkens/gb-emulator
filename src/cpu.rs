@@ -255,6 +255,11 @@ impl Cpu {
                 self.state = CpuState::Halted;
                 1
             }
+            Instruction::STOP => {
+                self.state = CpuState::Stopped;
+                panic!();
+                1
+            }
             Instruction::INC(operand) => self.increment(operand),
             Instruction::DEC(operand) => self.decrement(operand),
             Instruction::LD(load) => self.ld(load),

@@ -132,6 +132,7 @@ pub fn decode(memory: &mut MMU, pc: u16) -> (Instruction, u16) {
             (Instruction::DEC(target), 1)
         }
         0x0F => (Instruction::RRCA, 1),
+        0x10 => (Instruction::STOP, 2),
         0x17 => (Instruction::RLA, 1),
         0x18 => {
             let operand = helpers::u8_to_i8(memory.read_byte(pc + 1));
@@ -596,6 +597,7 @@ fn int_to_register(int: u8) -> Result<Operand, ()> {
 pub enum Instruction {
     NOP,
     HALT,
+    STOP,
     CPL,
     DAA,
     SCF,
@@ -633,6 +635,7 @@ impl Display for Instruction {
         match self {
             Instruction::NOP => write!(f, "NOP"),
             Instruction::HALT => write!(f, "HALT"),
+            Instruction::STOP => write!(f, "STOP"),
             Instruction::DAA => write!(f, "DAA"),
             Instruction::SCF => write!(f, "SCF"),
             Instruction::CCF => write!(f, "CCF"),

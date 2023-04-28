@@ -90,10 +90,11 @@ impl MMU {
             0xE000..=0xFDFF => self.read_byte_from_storage(pos - 0x2000),
             0xFE00..=0xFE9F => self.video.read_byte_oam(pos),
             0xFEA0..=0xFEFF => {
-                event!(Level::ERROR, "Prohibited memory access");
-                panic!();
+                event!(Level::ERROR, "Prohibited memory access {:#04X}", pos);
+                 0xFF
             }
-            0xFF00..=0xFF07 => self.read_io_register(pos),
+            0xFF00..=0xFF02 => self.read_io_register(pos),
+            0xFF04..=0xFF07 => self.read_io_register(pos),
             0xFF30..=0xFF3F => self.read_io_register(pos),
             0xFF0F => self.interrupt_flags.bits,
             0xFF10..=0xFF7F => self.read_io_register(pos),
@@ -103,7 +104,8 @@ impl MMU {
             }
             0xFFFF => self.interrupt_enable.bits,
             _ => {
-                unimplemented!("Memory map not implemented for {:#08X}", pos)
+                event!(Level::ERROR, "Memory map not implemented for {:#04X}", pos);
+                0xFF
             }
         }
     }
@@ -212,6 +214,9 @@ impl MMU {
                 0
             } // serial control not implemented
             0xFF04 => self.div,
+            0xFF05 => self.tima,
+            0xFF06 => self.tma,
+            0xFF07 => self.tac.bits(),
             0xFF30..=0xFF3F => {
                 event!(Level::WARN, "Audio wave read, not implemented");
                 0
@@ -226,6 +231,10 @@ impl MMU {
             }
             0xFF45 => {
                 unimplemented!()
+            }
+            0xFF4D => {
+                // CGB speed switch
+                0xFF
             }
             _ => {
                 unimplemented!("IO register not implemented for {:#06X}", pos)
@@ -247,7 +256,7 @@ impl MMU {
             0xFF10..=0xFF26 => event!(Level::WARN, "Audio register write, not implemented"),
             0xFF30..=0xFF3F => event!(Level::WARN, "Audio wave write, not implemented"),
             0xFF40 => self.video.lcd_control = LcdControl::from_bits(byte).unwrap(),
-            0xFF41 => self.video.lcd_status = LcdStatus::from_bits(byte).unwrap(),
+            0xFF41 => self.video.lcd_status = LcdStatus::from_bits(byte & 0x78).unwrap(),
             0xFF42 => self.video.scy = byte,
             0xFF43 => self.video.scx = byte,
             0xFF45 => self.video.lyc = byte,
@@ -257,6 +266,7 @@ impl MMU {
             0xFF49 => self.video.obj_1_palette = byte,
             0xFF4A => self.video.window_y = byte,
             0xFF4B => self.video.window_x = byte,
+            0xFF4D => event!(Level::WARN, "KEY1 prepare speed switch (CGB only) not supported"),
             0xFF4F => self.video.bank_select = byte,
             0xFF50 => event!(Level::WARN, "Disable boot rom, not implemented"),
             _ => {
@@ -322,9 +332,7 @@ impl MMU {
     pub fn handle_serial(&mut self) {
         if self.sc.contains(SerialControl::TRANSFER_START) {
             let char = self.sb.as_char().unwrap();
-            if char == 'T' {
-                panic!();
-            }
+
             if char == '\n' {
                 println!();
             } else {
