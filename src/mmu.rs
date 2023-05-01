@@ -91,7 +91,7 @@ impl MMU {
             0xFE00..=0xFE9F => self.video.read_byte_oam(pos),
             0xFEA0..=0xFEFF => {
                 event!(Level::ERROR, "Prohibited memory access {:#04X}", pos);
-                0xFF
+                panic!();
             }
             0xFF00..=0xFF02 => self.read_io_register(pos),
             0xFF04..=0xFF07 => self.read_io_register(pos),
@@ -139,7 +139,7 @@ impl MMU {
             0xFF69 => self.write_bcpd_palette(byte),
             0xFF6A => self.write_io_register(pos, byte),
             0xFF6B => self.write_io_register(pos, byte),
-            0xFF7F..=0xFFFE => self.write_byte_to_storage(pos, byte), // high ram
+            0xFF80..=0xFFFE => self.write_byte_to_storage(pos, byte), // high ram
             0xFFFF => self.write_interrupt_enable(byte),
             _ => panic!(
                 "Unimplemented memory write to addr {:#04X} -> {:#04X}",
@@ -225,6 +225,10 @@ impl MMU {
             0xFF05 => self.tima,
             0xFF06 => self.tma,
             0xFF07 => self.tac.bits(),
+            0xFF10..=0xFF26 => {
+                event!(Level::WARN, "Audio register read, not implemented");
+                0
+            },
             0xFF30..=0xFF3F => {
                 event!(Level::WARN, "Audio wave read, not implemented");
                 0
@@ -323,6 +327,8 @@ impl MMU {
         }
 
         self.step_timers();
+
+        self.interrupt_flags = self.video.step(self.interrupt_flags);
     }
 
     fn step_timers(&mut self) {
@@ -340,6 +346,7 @@ impl MMU {
         };
 
         if self.tima_step > step {
+            self.tima_step = 0;
             let (new_tima, overflow) = self.tima.overflowing_add(1);
             self.tima = new_tima;
             if overflow {

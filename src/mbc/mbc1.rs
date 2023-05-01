@@ -27,13 +27,13 @@ impl Mbc1 {
 
 impl Mbc for Mbc1 {
     fn read_rom(&mut self, pos: u16) -> u8 {
-        let index = if pos < 0x4000 {
-            pos
+        let index: u64 = if pos < 0x4000 {
+            pos as u64
         } else {
-            (pos & 0x3FFF) | (self.rom_bank * 0x4000)
+            (pos as u64 & 0x3FFF) | (self.rom_bank as u64 * 0x4000)
         };
 
-        self.storage.set_position(index as u64);
+        self.storage.set_position(index);
         self.storage.read_u8().unwrap()
     }
 

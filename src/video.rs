@@ -256,16 +256,16 @@ impl Video {
             if self.lcd_control.contains(LcdControl::OBJ_SIZE) {
                 if y_position > self.line as i64 - 16 && y_position <= self.line as i64 {
                     let tile1 = self.get_tile(object[2] & 0xFE, false);
-                    self.draw_tile(tile1, x_position, y_position);
+                    self.draw_tile(tile1, x_position, y_position, true);
                 }
 
                 if y_position > self.line as i64 - 8 && y_position <= self.line as i64 {
                     let tile2 = self.get_tile(object[2] | 0x01, false);
-                    self.draw_tile(tile2, x_position, y_position + 8);
+                    self.draw_tile(tile2, x_position, y_position + 8, true);
                 }
             } else if y_position > self.line as i64 - 8 && y_position <= self.line as i64 {
                 let tile = self.get_tile(object[2], false);
-                self.draw_tile(tile, x_position, y_position);
+                self.draw_tile(tile, x_position, y_position, true);
             };
         });
     }
@@ -289,7 +289,7 @@ impl Video {
             let anchor_x = ((i as u64 % 32) * 8) + self.scx as u64;
             let anchor_y = tile_map_row * 8 + self.scy as u64;
 
-            self.draw_tile(tile, anchor_x as i64, anchor_y as i64);
+            self.draw_tile(tile, anchor_x as i64, anchor_y as i64, false);
         });
     }
 
@@ -310,7 +310,7 @@ impl Video {
             let anchor_x = ((i as u64 % 32) * 8) + self.scx as u64;
             let anchor_y = tile_map_row * 8 + self.scy as u64;
 
-            self.draw_tile(tile, anchor_x as i64, anchor_y as i64);
+            self.draw_tile(tile, anchor_x as i64, anchor_y as i64, false);
         });
     }
 
@@ -319,7 +319,7 @@ impl Video {
             let tile = self.get_tile(x as u8, false);
             let anchor_x = (x % (SCREEN_WIDTH as u64 / 8)) * 8;
             let anchor_y = (x / (SCREEN_WIDTH as u64 / 8)) * 8;
-            self.draw_tile(tile, anchor_x as i64, anchor_y as i64);
+            self.draw_tile(tile, anchor_x as i64, anchor_y as i64, false);
         }
     }
 
@@ -329,7 +329,7 @@ impl Video {
     /// window have no transparency.
     ///
     /// todo: implement transparency
-    fn draw_tile(&mut self, tile: Tile, anchor_x: i64, anchor_y: i64) {
+    fn draw_tile(&mut self, tile: Tile, anchor_x: i64, anchor_y: i64, transparent: bool) {
         if anchor_x < -8
             || anchor_y < -8
             || anchor_x > SCREEN_WIDTH as i64
@@ -341,26 +341,41 @@ impl Video {
         let tile_line_index = self.line as i64 - anchor_y;
 
         if !(0..8).contains(&tile_line_index) {
-            panic!();
+            return;
         }
 
         let tile_line_index = tile_line_index as usize;
 
+        let line_clip_start = anchor_x.min(0).unsigned_abs() as usize;
+        let line_clip_end = (anchor_x + 8 - SCREEN_WIDTH as i64).max(0) as usize;
+        let start_pos = tile_line_index * 8 + line_clip_start;
+        let end_pos = start_pos + 8 - line_clip_end - line_clip_start;
+
         self.screen_buffer
-            .set_position(self.line as u64 * SCREEN_WIDTH as u64 + anchor_x.max(0) as u64);
-        let row_scaled: [u8; 8] = tile[tile_line_index * 8..(tile_line_index + 1) * 8]
+            .set_position(self.line as u64 * SCREEN_WIDTH as u64 + anchor_x.max(0) as u64 + line_clip_start as u64);
+
+        let row_scaled: Vec<u8> = tile[start_pos..end_pos]
             .iter()
             .skip(anchor_x.min(0).unsigned_abs() as usize)
-            .map(|f| f * 60)
-            .collect::<Vec<u8>>()
-            .try_into()
-            .unwrap();
-        let _ = self.screen_buffer.write(&row_scaled).unwrap();
+            .map(|x| x * 60)
+            .collect();
+
+        if !transparent {
+            let _ = self.screen_buffer.write(&row_scaled).unwrap();
+        } else {
+            row_scaled.iter().for_each(|x| {
+                if *x == 0 {
+                    self.screen_buffer.set_position(self.screen_buffer.position() + 1);
+                } else {
+                    self.screen_buffer.write_u8(*x).unwrap();
+                }
+            })
+        }
     }
 
     fn get_tile(&mut self, number: u8, signed: bool) -> Tile {
         let pos = if signed {
-            (0x9000 + (helpers::u8_to_i8(number) as u64 * 16)) - VRAM_START as u64
+            ((0x9000 + (helpers::u8_to_i8(number) as i64 * 16)) - VRAM_START as i64) as u64
         } else {
             0x8000 + (number as u64 * 16) - VRAM_START as u64
         };

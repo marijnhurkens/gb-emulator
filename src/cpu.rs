@@ -124,7 +124,11 @@ impl Cpu {
             }
         }
 
-        let t_cycles = if self.state != CpuState::Halted {
+        let t_cycles = if self.handle_interrupts(screen_buffer) > 0 {
+            4 * 4
+        } else if self.state == CpuState::Halted {
+            4
+        } else {
             self.current_opcode = Some(self.mmu.read_byte(self.pc));
             let (instruction, length) = decode(&mut self.mmu, self.pc);
             self.current_instruction = Some(instruction);
@@ -140,8 +144,6 @@ impl Cpu {
             self.pc = self.pc.wrapping_add(length);
 
             self.process_instruction(instruction) * 4
-        } else {
-            4
         };
 
         self.log_doctor();
@@ -159,109 +161,114 @@ impl Cpu {
                 'D' => self.debug_all(),
                 _ => (),
             }
-
-            // term.clear_line().unwrap();
-            // term.clear_line().unwrap();
         }
 
         for _ in 0..t_cycles {
             self.mmu.step();
-
-            let interrupt_flags = self.mmu.video.step(self.mmu.interrupt_flags);
-            self.mmu.interrupt_flags = interrupt_flags;
-
-            // When an interrupt is requested we wake from HALT, handle the interrupt if IME is set,
-            // and then continue with the next instruction.
-            if ((self.mmu.interrupt_flags & self.mmu.interrupt_enable) != InterruptFlags::empty())
-                && self.state == CpuState::Halted
-            {
-                self.state = CpuState::Running;
-            }
-
-            // INTERRUPTS
-            if self.interrupts_enabled {
-                if self.mmu.interrupt_flags.contains(InterruptFlags::VBLANK)
-                    && self.mmu.interrupt_enable.contains(InterruptFlags::VBLANK)
-                {
-                    // Draw to screen
-                    if let Some(buffer) = &screen_buffer {
-                        let mut guard = buffer.lock().unwrap();
-                        (*guard) = self.mmu.video.read_screen_buffer();
-                        drop(guard);
-                    }
-
-                    self.interrupts_enabled = false;
-                    let interrupt_flags =
-                        InterruptFlags::from_bits(self.mmu.read_byte(0xFF0F)).unwrap();
-                    self.mmu
-                        .write_byte(0xFF0F, (interrupt_flags - InterruptFlags::VBLANK).bits());
-
-                    self.push_word(self.pc);
-                    let address = 0x0040;
-                    event!(Level::DEBUG, "INT 40 VBLANK | {:#08X}", address);
-                    self.pc = address;
-
-                    // handle timing
-                    let expected_time = Duration::from_secs_f64(1.0 / 59.73);
-                    let end_time = Instant::now();
-                    let time_elapsed = end_time.duration_since(self.frame_start);
-
-                    if time_elapsed.lt(&expected_time) {
-                        let sleep_for = expected_time.sub(time_elapsed);
-                        sleep(sleep_for);
-                    }
-
-                    self.frame_start = Instant::now();
-                }
-
-                if self.mmu.interrupt_flags.contains(InterruptFlags::LCD_STAT)
-                    && self.mmu.interrupt_enable.contains(InterruptFlags::LCD_STAT)
-                {
-                    self.interrupts_enabled = false;
-                    let interrupt_flags =
-                        InterruptFlags::from_bits(self.mmu.read_byte(0xFF0F)).unwrap();
-                    self.mmu
-                        .write_byte(0xFF0F, (interrupt_flags - InterruptFlags::LCD_STAT).bits());
-
-                    self.push_word(self.pc);
-                    let address = 0x0048;
-                    event!(Level::DEBUG, "INT 48 STAT | {:#08X}", address);
-                    self.pc = address;
-                }
-
-                if self.mmu.interrupt_flags.contains(InterruptFlags::TIMER)
-                    && self.mmu.interrupt_enable.contains(InterruptFlags::TIMER)
-                {
-                    self.interrupts_enabled = false;
-                    let interrupt_flags =
-                        InterruptFlags::from_bits(self.mmu.read_byte(0xFF0F)).unwrap();
-                    self.mmu
-                        .write_byte(0xFF0F, (interrupt_flags - InterruptFlags::TIMER).bits());
-
-                    self.push_word(self.pc);
-                    let address = 0x0050;
-                    event!(Level::DEBUG, "INT 50 TIMER | {:#08X}", address);
-                    self.pc = address;
-                }
-
-                if self.mmu.interrupt_flags.contains(InterruptFlags::JOYPAD)
-                    && self.mmu.interrupt_enable.contains(InterruptFlags::JOYPAD)
-                {
-                    self.interrupts_enabled = false;
-                    let interrupt_flags =
-                        InterruptFlags::from_bits(self.mmu.read_byte(0xFF0F)).unwrap();
-                    self.mmu
-                        .write_byte(0xFF0F, (interrupt_flags - InterruptFlags::JOYPAD).bits());
-
-                    self.push_word(self.pc);
-                    let address = 0x0060;
-                    event!(Level::DEBUG, "INT 60 JOYPAD | {:#08X}", address);
-                    self.pc = address;
-                }
-            }
         }
 
         self.mmu.handle_serial();
+    }
+
+    fn handle_interrupts(&mut self, screen_buffer: &Option<Arc<Mutex<ScreenBuffer>>>) -> usize {
+        // When an interrupt is requested we wake from HALT, handle the interrupt if IME is set,
+        // and then continue with the next instruction.
+        if ((self.mmu.interrupt_flags & self.mmu.interrupt_enable) != InterruptFlags::empty())
+            && self.state == CpuState::Halted
+        {
+            self.state = CpuState::Running;
+        }
+
+        if self.interrupts_enabled {
+            if self.mmu.interrupt_flags.contains(InterruptFlags::VBLANK)
+                && self.mmu.interrupt_enable.contains(InterruptFlags::VBLANK)
+            {
+                // Draw to screen
+                if let Some(buffer) = &screen_buffer {
+                    let mut guard = buffer.lock().unwrap();
+                    (*guard) = self.mmu.video.read_screen_buffer();
+                    drop(guard);
+                }
+
+                self.interrupts_enabled = false;
+                let interrupt_flags =
+                    InterruptFlags::from_bits(self.mmu.read_byte(0xFF0F)).unwrap();
+                self.mmu
+                    .write_byte(0xFF0F, (interrupt_flags - InterruptFlags::VBLANK).bits());
+
+                self.push_word(self.pc);
+                let address = 0x0040;
+                event!(Level::INFO, "INT 40 VBLANK | {:#08X}", address);
+                self.pc = address;
+
+                // handle timing
+                let expected_time = Duration::from_secs_f64(1.0 / 59.73);
+                let end_time = Instant::now();
+                let time_elapsed = end_time.duration_since(self.frame_start);
+
+                if time_elapsed.lt(&expected_time) {
+                    let sleep_for = expected_time.sub(time_elapsed);
+                    sleep(sleep_for);
+                }
+
+                self.frame_start = Instant::now();
+
+                return 4;
+            }
+
+            if self.mmu.interrupt_flags.contains(InterruptFlags::LCD_STAT)
+                && self.mmu.interrupt_enable.contains(InterruptFlags::LCD_STAT)
+            {
+                self.interrupts_enabled = false;
+                let interrupt_flags =
+                    InterruptFlags::from_bits(self.mmu.read_byte(0xFF0F)).unwrap();
+                self.mmu
+                    .write_byte(0xFF0F, (interrupt_flags - InterruptFlags::LCD_STAT).bits());
+
+                self.push_word(self.pc);
+                let address = 0x0048;
+                event!(Level::INFO, "INT 48 STAT | {:#08X}", address);
+                self.pc = address;
+
+                return 4;
+            }
+
+            if self.mmu.interrupt_flags.contains(InterruptFlags::TIMER)
+                && self.mmu.interrupt_enable.contains(InterruptFlags::TIMER)
+            {
+                self.interrupts_enabled = false;
+                let interrupt_flags =
+                    InterruptFlags::from_bits(self.mmu.read_byte(0xFF0F)).unwrap();
+                self.mmu
+                    .write_byte(0xFF0F, (interrupt_flags - InterruptFlags::TIMER).bits());
+
+                self.push_word(self.pc);
+                let address = 0x0050;
+                event!(Level::INFO, "INT 50 TIMER | {:#08X}", address);
+                self.pc = address;
+
+                return 4;
+            }
+
+            if self.mmu.interrupt_flags.contains(InterruptFlags::JOYPAD)
+                && self.mmu.interrupt_enable.contains(InterruptFlags::JOYPAD)
+            {
+                self.interrupts_enabled = false;
+                let interrupt_flags =
+                    InterruptFlags::from_bits(self.mmu.read_byte(0xFF0F)).unwrap();
+                self.mmu
+                    .write_byte(0xFF0F, (interrupt_flags - InterruptFlags::JOYPAD).bits());
+
+                self.push_word(self.pc);
+                let address = 0x0060;
+                event!(Level::INFO, "INT 60 JOYPAD | {:#08X}", address);
+                self.pc = address;
+
+                return 4;
+            }
+        }
+
+        0
     }
 
     /**
@@ -893,7 +900,7 @@ impl Cpu {
                     2
                 }
                 Operand::StackPointer(None) => {
-                    self.sp = self.get_register_pair(source);
+                    self.set_sp(self.get_register_pair(source));
                     2
                 }
                 _ => panic!("not implemented"),
@@ -926,7 +933,7 @@ impl Cpu {
                     3
                 }
                 Operand::StackPointer(None) => {
-                    self.sp = operand;
+                    self.set_sp(operand);
                     3
                 }
                 _ => {
@@ -969,18 +976,17 @@ impl Cpu {
     }
 
     fn push_word(&mut self, word: u16) {
-        self.sp -= 1;
+        self.set_sp(self.sp - 1);
         self.mmu.write_byte(self.sp, ((word & 0xFF00) >> 8) as u8);
-
-        self.sp -= 1;
+        self.set_sp(self.sp - 1);
         self.mmu.write_byte(self.sp, (word & 0xFF) as u8);
     }
 
     fn pop_word(&mut self) -> u16 {
         let data_low = self.mmu.read_byte(self.sp) as u16;
-        self.sp += 1;
+        self.set_sp(self.sp + 1);
         let data_high = self.mmu.read_byte(self.sp) as u16;
-        self.sp += 1;
+        self.set_sp(self.sp + 1);
 
         data_low | (data_high << 8)
     }
@@ -1017,7 +1023,7 @@ impl Cpu {
             }
             Operand::ImmediateOperand(_) => panic!("not implemented"),
             Operand::StackPointer(None) => {
-                self.sp = self.sp.wrapping_add(1);
+                self.set_sp(self.sp.wrapping_add(1));
                 cycles = 2;
             }
             _ => panic!("not implemented"),
@@ -1057,7 +1063,7 @@ impl Cpu {
             }
             Operand::ImmediateOperand(_) => panic!("not implemented"),
             Operand::StackPointer(None) => {
-                self.sp = self.sp.wrapping_sub(1);
+                self.set_sp(self.sp.wrapping_sub(1));
                 cycles = 2;
             }
             _ => panic!("not implemented"),
@@ -1330,7 +1336,7 @@ impl Cpu {
                 self.set_register_pair(target_pair, (result & 0xFFFF) as u16);
             }
             Operand::StackPointer(None) => {
-                self.sp = result as u16;
+                self.set_sp(result as u16);
             }
             _ => panic!("should not happen"),
         }
@@ -1688,6 +1694,12 @@ impl Cpu {
             Register::A => self.a = data,
             Register::F => self.flags.set_bits(data),
         };
+    }
+
+    fn set_sp(&mut self, val: u16)
+    {
+        // println!("{:#4X}", val);
+        self.sp = val;
     }
 
     fn set_register_pair(&mut self, reg_pair: RegisterPair, data: u16) {
