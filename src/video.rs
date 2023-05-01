@@ -351,8 +351,11 @@ impl Video {
         let start_pos = tile_line_index * 8 + line_clip_start;
         let end_pos = start_pos + 8 - line_clip_end - line_clip_start;
 
-        self.screen_buffer
-            .set_position(self.line as u64 * SCREEN_WIDTH as u64 + anchor_x.max(0) as u64 + line_clip_start as u64);
+        self.screen_buffer.set_position(
+            self.line as u64 * SCREEN_WIDTH as u64
+                + anchor_x.max(0) as u64
+                + line_clip_start as u64,
+        );
 
         let row_scaled: Vec<u8> = tile[start_pos..end_pos]
             .iter()
@@ -365,7 +368,8 @@ impl Video {
         } else {
             row_scaled.iter().for_each(|x| {
                 if *x == 0 {
-                    self.screen_buffer.set_position(self.screen_buffer.position() + 1);
+                    self.screen_buffer
+                        .set_position(self.screen_buffer.position() + 1);
                 } else {
                     self.screen_buffer.write_u8(*x).unwrap();
                 }

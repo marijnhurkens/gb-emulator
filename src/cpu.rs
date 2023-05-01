@@ -1696,8 +1696,7 @@ impl Cpu {
         };
     }
 
-    fn set_sp(&mut self, val: u16)
-    {
+    fn set_sp(&mut self, val: u16) {
         // println!("{:#4X}", val);
         self.sp = val;
     }

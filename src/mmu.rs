@@ -139,7 +139,7 @@ impl MMU {
             0xFF69 => self.write_bcpd_palette(byte),
             0xFF6A => self.write_io_register(pos, byte),
             0xFF6B => self.write_io_register(pos, byte),
-            0xFF80..=0xFFFE => self.write_byte_to_storage(pos, byte), // high ram
+            0xFF7F..=0xFFFE => self.write_byte_to_storage(pos, byte), // high ram
             0xFFFF => self.write_interrupt_enable(byte),
             _ => panic!(
                 "Unimplemented memory write to addr {:#04X} -> {:#04X}",
@@ -228,7 +228,7 @@ impl MMU {
             0xFF10..=0xFF26 => {
                 event!(Level::WARN, "Audio register read, not implemented");
                 0
-            },
+            }
             0xFF30..=0xFF3F => {
                 event!(Level::WARN, "Audio wave read, not implemented");
                 0
