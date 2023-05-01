@@ -151,18 +151,20 @@ impl State {
 
 impl EventHandler for State {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
-        let mut key_state = self.key_state.lock().unwrap();
+        while ctx.time.check_update_time(60) {
+            let mut key_state = self.key_state.lock().unwrap();
 
-        key_state.a = ctx.keyboard.is_key_pressed(KeyCode::Z);
-        key_state.b = ctx.keyboard.is_key_pressed(KeyCode::X);
+            key_state.a = ctx.keyboard.is_key_pressed(KeyCode::Z);
+            key_state.b = ctx.keyboard.is_key_pressed(KeyCode::X);
 
-        key_state.up = ctx.keyboard.is_key_pressed(KeyCode::Up);
-        key_state.down = ctx.keyboard.is_key_pressed(KeyCode::Down);
-        key_state.left = ctx.keyboard.is_key_pressed(KeyCode::Left);
-        key_state.right = ctx.keyboard.is_key_pressed(KeyCode::Right);
+            key_state.up = ctx.keyboard.is_key_pressed(KeyCode::Up);
+            key_state.down = ctx.keyboard.is_key_pressed(KeyCode::Down);
+            key_state.left = ctx.keyboard.is_key_pressed(KeyCode::Left);
+            key_state.right = ctx.keyboard.is_key_pressed(KeyCode::Right);
 
-        key_state.select = ctx.keyboard.is_key_pressed(KeyCode::Backslash);
-        key_state.start = ctx.keyboard.is_key_pressed(KeyCode::Return);
+            key_state.select = ctx.keyboard.is_key_pressed(KeyCode::Backslash);
+            key_state.start = ctx.keyboard.is_key_pressed(KeyCode::Return);
+        }
 
         Ok(())
     }

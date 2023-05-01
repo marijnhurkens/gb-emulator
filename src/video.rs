@@ -62,10 +62,12 @@ bitflags! {
         const ALL_MODE_FLAGS    =  0b00000011;
 
         const LYC               =  0b00000100;
-        const HBLANK_INTERRUPT  =  0b00001000;
-        const VBLANK_INTERRUPT  =  0b00010000;
-        const OAM_INTERRUPT     =  0b00100000;
-        const LYC_INTERRUPT     =  0b01000000;
+
+        const HBLANK_INTERRUPT      =  0b00001000;
+        const VBLANK_INTERRUPT      =  0b00010000;
+        const OAM_INTERRUPT         =  0b00100000;
+        const LYC_INTERRUPT         =  0b01000000;
+        const ALL_INTERRUPT_FLAGS   =  0b01111000;
     }
 
     pub struct LcdControl: u8 {
@@ -118,11 +120,14 @@ impl Video {
 
     pub fn step(&mut self, interrupt_flags: InterruptFlags) -> InterruptFlags {
         let mut interrupt_flags = interrupt_flags;
+        // keep track of the various interrupt which can trigger a STAT interrupt
+        let mut stat_interrupt = LcdStatus::empty();
+
         self.mode_step += 1;
 
         if self.line == self.lyc {
             self.lcd_status |= LcdStatus::LYC;
-            self.lcd_status |= LcdStatus::LYC_INTERRUPT;
+            stat_interrupt |= LcdStatus::LYC_INTERRUPT;
         } else {
             self.lcd_status -= LcdStatus::LYC
         }
@@ -138,11 +143,12 @@ impl Video {
             }
             VideoMode::VramRead => {
                 if self.mode_step >= 172 {
+                    self.draw_line();
                     self.mode_step = 0;
                     self.mode = VideoMode::HBlank;
                     self.lcd_status -= LcdStatus::ALL_MODE_FLAGS;
                     self.lcd_status |= LcdStatus::HBLANK;
-                    self.lcd_status |= LcdStatus::HBLANK_INTERRUPT;
+                    stat_interrupt |= LcdStatus::HBLANK_INTERRUPT;
                 }
             }
             VideoMode::HBlank => {
@@ -155,13 +161,13 @@ impl Video {
                         // set the lcd stat register and set the vblank interrupt
                         self.lcd_status -= LcdStatus::ALL_MODE_FLAGS;
                         self.lcd_status |= LcdStatus::VBLANK;
-                        self.lcd_status |= LcdStatus::VBLANK_INTERRUPT;
+                        stat_interrupt |= LcdStatus::VBLANK_INTERRUPT;
                         interrupt_flags |= InterruptFlags::VBLANK;
                     } else {
                         self.mode = VideoMode::OamRead;
                         self.lcd_status -= LcdStatus::ALL_MODE_FLAGS;
                         self.lcd_status |= LcdStatus::OAM;
-                        self.lcd_status |= LcdStatus::OAM_INTERRUPT;
+                        stat_interrupt |= LcdStatus::OAM_INTERRUPT;
                     }
                 }
             }
@@ -171,25 +177,21 @@ impl Video {
                     self.line += 1;
 
                     if self.line > 153 {
-                        self.draw_line();
                         self.mode = VideoMode::OamRead;
                         self.line = 0;
                         self.lcd_status -= LcdStatus::ALL_MODE_FLAGS;
                         self.lcd_status |= LcdStatus::OAM;
-                        self.lcd_status |= LcdStatus::OAM_INTERRUPT;
+                        stat_interrupt |= LcdStatus::OAM_INTERRUPT;
                     }
                 }
             }
         };
 
-        // check if we need to trigger the STAT interrupt
-        if !interrupt_flags.contains(InterruptFlags::LCD_STAT)
-            && (self.lcd_status.contains(LcdStatus::HBLANK_INTERRUPT)
-                || self.lcd_status.contains(LcdStatus::VBLANK_INTERRUPT)
-                || self.lcd_status.contains(LcdStatus::OAM_INTERRUPT)
-                || self.lcd_status.contains(LcdStatus::LYC_INTERRUPT))
-        {
+        // check if we need to trigger the STAT interrupt, this is only the case if any of the modes
+        // or LYC=LY have been triggered & the corresponding bit in LCD status is set
+        if !(stat_interrupt & self.lcd_status).is_empty() {
             interrupt_flags |= InterruptFlags::LCD_STAT;
+            self.lcd_status -= LcdStatus::ALL_INTERRUPT_FLAGS;
         }
 
         interrupt_flags
@@ -252,14 +254,17 @@ impl Video {
             let _attributes = ObjectAttributes::from_bits(object[3]);
 
             if self.lcd_control.contains(LcdControl::OBJ_SIZE) {
-                let tile1 = self.get_tile(object[2] & 0xFE, false);
-                let tile2 = self.get_tile(object[2] | 0x01, false);
+                if y_position > self.line as i64 - 16 && y_position <= self.line as i64 {
+                    let tile1 = self.get_tile(object[2] & 0xFE, false);
+                    self.draw_tile(tile1, x_position, y_position);
+                }
 
-                self.draw_tile(tile1, x_position, y_position);
-                self.draw_tile(tile2, x_position, y_position + 8);
-            } else {
+                if y_position > self.line as i64 - 8 && y_position <= self.line as i64 {
+                    let tile2 = self.get_tile(object[2] | 0x01, false);
+                    self.draw_tile(tile2, x_position, y_position + 8);
+                }
+            } else if y_position > self.line as i64 - 8 && y_position <= self.line as i64 {
                 let tile = self.get_tile(object[2], false);
-
                 self.draw_tile(tile, x_position, y_position);
             };
         });
@@ -270,9 +275,10 @@ impl Video {
     ///
     /// todo: implement wrapping
     fn draw_background(&mut self) {
+        let tile_map_row = self.line as u64 / 8;
         self.vram
-            .set_position((BACKGROUND_MAP_START - VRAM_START) as u64);
-        let mut tile_map = [0; BACKGROUND_MAP_SIZE as usize];
+            .set_position((BACKGROUND_MAP_START - VRAM_START) as u64 + tile_map_row * 32);
+        let mut tile_map = [0; 32];
         self.vram.read_exact(&mut tile_map).unwrap();
 
         tile_map.iter().enumerate().for_each(|(i, tile_index)| {
@@ -281,7 +287,7 @@ impl Video {
                 !self.lcd_control.contains(LcdControl::WINDOW_BG_ADDRES_MODE),
             );
             let anchor_x = ((i as u64 % 32) * 8) + self.scx as u64;
-            let anchor_y = ((i as u64 / 32) * 8) + self.scy as u64;
+            let anchor_y = tile_map_row * 8 + self.scy as u64;
 
             self.draw_tile(tile, anchor_x as i64, anchor_y as i64);
         });
@@ -290,9 +296,10 @@ impl Video {
     /// The window is just tile map which can be drawn as a rectangle. It can be positioned
     /// but it will not wrap around. It has no transparency so the use is limited.
     fn draw_window(&mut self) {
+        let tile_map_row = self.line as u64 / 8;
         self.vram
-            .set_position((WINDOW_MAP_START - VRAM_START) as u64);
-        let mut tile_map = [0; WINDOW_MAP_SIZE as usize];
+            .set_position((WINDOW_MAP_START - VRAM_START) as u64 + tile_map_row * 32);
+        let mut tile_map = [0; 32];
         self.vram.read_exact(&mut tile_map).unwrap();
 
         tile_map.iter().enumerate().for_each(|(i, tile_index)| {
@@ -300,8 +307,8 @@ impl Video {
                 *tile_index,
                 !self.lcd_control.contains(LcdControl::WINDOW_BG_ADDRES_MODE),
             );
-            let anchor_x = ((i as u64 % 32) * 8) + self.window_x as u64 - 7;
-            let anchor_y = (i as u64 / 32) * 8 + self.window_y as u64;
+            let anchor_x = ((i as u64 % 32) * 8) + self.scx as u64;
+            let anchor_y = tile_map_row * 8 + self.scy as u64;
 
             self.draw_tile(tile, anchor_x as i64, anchor_y as i64);
         });
@@ -331,22 +338,24 @@ impl Video {
             return;
         }
 
-        tile.chunks(8)
-            .skip(anchor_y.min(0).unsigned_abs() as usize)
-            .enumerate()
-            .for_each(|(i, row)| {
-                let y = anchor_y as u64 + i as u64;
-                self.screen_buffer
-                    .set_position(y * SCREEN_WIDTH as u64 + anchor_x.max(0) as u64);
-                let row_scaled: [u8; 8] = row
-                    .iter()
-                    .skip(anchor_x.min(0).unsigned_abs() as usize)
-                    .map(|f| f * 60)
-                    .collect::<Vec<u8>>()
-                    .try_into()
-                    .unwrap();
-                let _ = self.screen_buffer.write(&row_scaled).unwrap();
-            })
+        let tile_line_index = self.line as i64 - anchor_y;
+
+        if !(0..8).contains(&tile_line_index) {
+            panic!();
+        }
+
+        let tile_line_index = tile_line_index as usize;
+
+        self.screen_buffer
+            .set_position(self.line as u64 * SCREEN_WIDTH as u64 + anchor_x.max(0) as u64);
+        let row_scaled: [u8; 8] = tile[tile_line_index * 8..(tile_line_index + 1) * 8]
+            .iter()
+            .skip(anchor_x.min(0).unsigned_abs() as usize)
+            .map(|f| f * 60)
+            .collect::<Vec<u8>>()
+            .try_into()
+            .unwrap();
+        let _ = self.screen_buffer.write(&row_scaled).unwrap();
     }
 
     fn get_tile(&mut self, number: u8, signed: bool) -> Tile {

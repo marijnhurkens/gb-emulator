@@ -137,6 +137,8 @@ impl MMU {
             0xFF40..=0xFF55 => self.write_io_register(pos, byte),
             0xFF68 => self.write_bcps_palette(byte),
             0xFF69 => self.write_bcpd_palette(byte),
+            0xFF6A => self.write_io_register(pos, byte),
+            0xFF6B => self.write_io_register(pos, byte),
             0xFF7F..=0xFFFE => self.write_byte_to_storage(pos, byte), // high ram
             0xFFFF => self.write_interrupt_enable(byte),
             _ => panic!(
@@ -177,33 +179,39 @@ impl MMU {
         self.write_byte(pos + 1, bytes[1]);
     }
 
-    fn read_key_state(&mut self) -> u8 {
+    /// Returns the key state and if it has changed
+    fn read_key_state(&mut self) -> (u8, bool) {
         let key_state = self.key_state.lock().unwrap();
 
-        if self.buttons & 0x20 == 0x0 {
-            self.buttons = (self.buttons & 0xf0)
+        let new_state = if self.buttons & 0x20 == 0x0 {
+            (self.buttons & 0xf0)
                 | ((!key_state.start as u8) << 3)
                 | ((!key_state.select as u8) << 2)
                 | ((!key_state.b as u8) << 1)
-                | (!key_state.a as u8);
-        }
-
-        if self.buttons & 0x10 == 0x0 {
-            self.buttons = (self.buttons & 0xf0)
+                | (!key_state.a as u8)
+        } else if self.buttons & 0x10 == 0x0 {
+            (self.buttons & 0xf0)
                 | ((!key_state.down as u8) << 3)
                 | ((!key_state.up as u8) << 2)
                 | ((!key_state.left as u8) << 1)
-                | (!key_state.right as u8);
+                | (!key_state.right as u8)
+        } else {
+            return (0xFF, false);
+        };
+
+        if self.buttons != new_state {
+            self.buttons = new_state;
+            return (self.buttons, true);
         }
 
-        self.buttons
+        (self.buttons, false)
     }
 
     fn read_io_register(&mut self, pos: u16) -> u8 {
         match pos {
             0xFF00 => {
                 // joypad input
-                self.read_key_state()
+                self.read_key_state().0
             }
             0xFF01 => {
                 event!(Level::WARN, "SB read, not implemented");
@@ -235,6 +243,10 @@ impl MMU {
             0xFF4D => {
                 // CGB speed switch
                 0xFF
+            }
+            0xFF6A | 0xFF6B => {
+                event!(Level::WARN, "CGB only not supported");
+                0
             }
             _ => {
                 unimplemented!("IO register not implemented for {:#06X}", pos)
@@ -272,6 +284,7 @@ impl MMU {
             ),
             0xFF4F => self.video.bank_select = byte,
             0xFF50 => event!(Level::WARN, "Disable boot rom, not implemented"),
+            0xFF6A | 0xFF6B => event!(Level::WARN, "CGB only not supported"),
             _ => {
                 unimplemented!("IO register not implemented for {:#08X}", pos)
             }
@@ -303,6 +316,10 @@ impl MMU {
         if self.div_step > DIVIDER_REG_CYCLES_PER_STEP {
             self.div_step = 0;
             self.div = self.div.wrapping_add(1);
+        }
+
+        if self.read_key_state().1 {
+            self.interrupt_flags |= InterruptFlags::JOYPAD;
         }
 
         self.step_timers();

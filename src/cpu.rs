@@ -1,10 +1,10 @@
-use std::io;
 use std::ops::Sub;
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use bitvec::macros::internal::funty::Fundamental;
+use console::Term;
 use tracing::{event, Level};
 
 use crate::instructions::{
@@ -16,26 +16,6 @@ use crate::ScreenBuffer;
 
 pub const CPU_FREQ: f64 = 4_194_304.0;
 const STACK_START: u16 = 0xfffe;
-
-pub struct Cpu {
-    pc: u16,
-    sp: u16,
-    a: u8, // accumulator
-    b: u8,
-    c: u8,
-    d: u8,
-    e: u8,
-    h: u8,
-    l: u8,
-    flags: CpuFlags,
-    interrupts_enabled: bool,
-    mmu: MMU,
-    state: CpuState,
-    break_point: Option<u16>,
-    current_opcode: Option<u8>,
-    current_instruction: Option<Instruction>,
-    frame_start: Instant,
-}
 
 #[derive(Debug)]
 pub struct CpuFlags {
@@ -67,6 +47,26 @@ enum CpuState {
     Running,
     Halted,
     Stopped,
+}
+
+pub struct Cpu {
+    pc: u16,
+    sp: u16,
+    a: u8, // accumulator
+    b: u8,
+    c: u8,
+    d: u8,
+    e: u8,
+    h: u8,
+    l: u8,
+    flags: CpuFlags,
+    interrupts_enabled: bool,
+    mmu: MMU,
+    state: CpuState,
+    break_point: Option<u16>,
+    current_opcode: Option<u8>,
+    current_instruction: Option<Instruction>,
+    frame_start: Instant,
 }
 
 impl Cpu {
@@ -119,6 +119,7 @@ impl Cpu {
 
         if let Some(break_point) = self.break_point {
             if break_point == self.pc {
+                event!(Level::ERROR, "----------- BREAK -----------");
                 self.state = CpuState::Stopped;
             }
         }
@@ -143,7 +144,25 @@ impl Cpu {
             4
         };
 
-        // self.log_doctor();
+        self.log_doctor();
+
+        if self.state == CpuState::Stopped {
+            let term = Term::stdout();
+            // term.write_line("Any key to cycle, C to continue execution, D to print debug info.").unwrap();
+            let input = term.read_char().expect("Error reading input.");
+
+            match input {
+                'N' => (),
+                'C' => {
+                    self.state = CpuState::Running;
+                }
+                'D' => self.debug_all(),
+                _ => (),
+            }
+
+            // term.clear_line().unwrap();
+            // term.clear_line().unwrap();
+        }
 
         for _ in 0..t_cycles {
             self.mmu.step();
@@ -151,9 +170,9 @@ impl Cpu {
             let interrupt_flags = self.mmu.video.step(self.mmu.interrupt_flags);
             self.mmu.interrupt_flags = interrupt_flags;
 
-            // When an interrupt is requested we wake from HALT, handle the interrupt ife IME is set,
+            // When an interrupt is requested we wake from HALT, handle the interrupt if IME is set,
             // and then continue with the next instruction.
-            if (self.mmu.interrupt_flags & self.mmu.interrupt_enable != InterruptFlags::empty())
+            if ((self.mmu.interrupt_flags & self.mmu.interrupt_enable) != InterruptFlags::empty())
                 && self.state == CpuState::Halted
             {
                 self.state = CpuState::Running;
@@ -249,7 +268,7 @@ impl Cpu {
      * Runs the next instruction and returns the cycle cost divided by 4 (M-cycles)
      */
     fn process_instruction(&mut self, instruction: Instruction) -> usize {
-        let m_cycles = match instruction {
+        match instruction {
             Instruction::NOP => 1,
             Instruction::HALT => {
                 self.state = CpuState::Halted;
@@ -300,28 +319,7 @@ impl Cpu {
             Instruction::RRA => self.rra(),
             Instruction::CCF => self.ccf(),
             Instruction::RRCA => self.rrca(),
-        };
-
-        if self.state == CpuState::Stopped {
-            event!(Level::ERROR, "--------- BREAK -----------");
-
-            self.debug_all();
-
-            let mut input = String::new(); // Take user input (to be parsed as clap args)
-            io::stdin()
-                .read_line(&mut input)
-                .expect("Error reading input.");
-
-            match input.as_str() {
-                "N" => (),
-                "C" => {
-                    self.state = CpuState::Running;
-                }
-                _ => println!("C to continue or N for next"),
-            }
         }
-
-        m_cycles
     }
 
     fn handle_cb(&mut self, instruction: InstructionCB) -> usize {
