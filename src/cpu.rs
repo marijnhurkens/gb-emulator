@@ -955,7 +955,7 @@ impl Cpu {
                     self.flags.c = (self.sp & 0xFF) + (operand as i16 as u16 & 0xFF) > 0xFF;
                     self.flags.h = (self.sp & 0xF) + (operand as i16 as u16 & 0xF) > 0xF;
 
-                    self.set_register_pair(target, (self.sp as i16 + operand as i16) as u16);
+                    self.set_register_pair(target, (self.sp as i32 + operand as i32) as u16);
                     3
                 }
                 _ => panic!("not implemented"),
@@ -1218,7 +1218,7 @@ impl Cpu {
         };
 
         let carry = self.flags.c.as_u8();
-        let res = self.a.wrapping_sub(byte + carry);
+        let res = self.a.wrapping_sub(byte).wrapping_sub(carry);
 
         self.flags.z = res == 0x0;
         self.flags.n = true;

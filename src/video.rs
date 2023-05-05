@@ -125,13 +125,6 @@ impl Video {
 
         self.mode_step += 1;
 
-        if self.line == self.lyc {
-            self.lcd_status |= LcdStatus::LYC;
-            stat_interrupt |= LcdStatus::LYC_INTERRUPT;
-        } else {
-            self.lcd_status -= LcdStatus::LYC
-        }
-
         match self.mode {
             VideoMode::OamRead => {
                 if self.mode_step >= 80 {
@@ -177,6 +170,7 @@ impl Video {
                     self.line += 1;
 
                     if self.line > 153 {
+                        self.clear_screen_buffer();
                         self.mode = VideoMode::OamRead;
                         self.line = 0;
                         self.lcd_status -= LcdStatus::ALL_MODE_FLAGS;
@@ -187,11 +181,18 @@ impl Video {
             }
         };
 
+        if self.line == self.lyc {
+            self.lcd_status |= LcdStatus::LYC;
+            stat_interrupt |= LcdStatus::LYC_INTERRUPT;
+        } else {
+            self.lcd_status -= LcdStatus::LYC
+        }
+
         // check if we need to trigger the STAT interrupt, this is only the case if any of the modes
         // or LYC=LY have been triggered & the corresponding bit in LCD status is set
         if !(stat_interrupt & self.lcd_status).is_empty() {
             interrupt_flags |= InterruptFlags::LCD_STAT;
-            self.lcd_status -= LcdStatus::ALL_INTERRUPT_FLAGS;
+            // self.lcd_status -= LcdStatus::ALL_INTERRUPT_FLAGS;
         }
 
         interrupt_flags
@@ -203,6 +204,11 @@ impl Video {
         self.screen_buffer.read_exact(&mut buffer).unwrap();
 
         buffer
+    }
+
+    fn clear_screen_buffer(&mut self) {
+        self.screen_buffer.set_position(0);
+        self.screen_buffer = Cursor::new(vec![0; SCREEN_BUFFER_SIZE])
     }
 
     pub fn read_byte(&mut self, pos: u16) -> u8 {
@@ -248,26 +254,44 @@ impl Video {
         self.oam.set_position(0);
         self.oam.read_exact(&mut data).unwrap();
 
-        data.chunks(4).for_each(|object| {
-            let y_position = object[0] as i64 - 16;
-            let x_position = object[1] as i64 - 8;
-            let _attributes = ObjectAttributes::from_bits(object[3]);
-
-            if self.lcd_control.contains(LcdControl::OBJ_SIZE) {
-                if y_position > self.line as i64 - 16 && y_position <= self.line as i64 {
-                    let tile1 = self.get_tile(object[2] & 0xFE, false);
-                    self.draw_tile(tile1, x_position, y_position, true);
+        let objects: Vec<_> = data
+            .chunks(4)
+            .map(|object| {
+                (
+                    object[0] as i64 - 16,
+                    object[1] as i64 - 8,
+                    object[2],
+                    ObjectAttributes::from_bits(object[3]).unwrap(),
+                )
+            })
+            .filter(|(y_pos, _, _, _)| {
+                if self.lcd_control.contains(LcdControl::OBJ_SIZE) {
+                    y_pos + 16 >= self.line as i64 && *y_pos < self.line as i64
+                } else {
+                    y_pos + 8 >= self.line as i64 && *y_pos < self.line as i64
                 }
+            })
+            .take(10)
+            .collect();
 
-                if y_position > self.line as i64 - 8 && y_position <= self.line as i64 {
-                    let tile2 = self.get_tile(object[2] | 0x01, false);
-                    self.draw_tile(tile2, x_position, y_position + 8, true);
-                }
-            } else if y_position > self.line as i64 - 8 && y_position <= self.line as i64 {
-                let tile = self.get_tile(object[2], false);
-                self.draw_tile(tile, x_position, y_position, true);
-            };
-        });
+        objects
+            .into_iter()
+            .for_each(|(y_pos, x_pos, index, attributes)| {
+                if self.lcd_control.contains(LcdControl::OBJ_SIZE) {
+                    if y_pos >= self.line as i64 - 8 && y_pos < self.line as i64 {
+                        let tile1 = self.get_tile(index & 0xFE, false);
+                        self.draw_tile(tile1, x_pos, y_pos, Some(attributes));
+                    }
+
+                    if y_pos >= self.line as i64 - 16 && y_pos < self.line as i64 {
+                        let tile2 = self.get_tile(index | 0x01, false);
+                        self.draw_tile(tile2, x_pos, y_pos + 8, Some(attributes));
+                    }
+                } else if y_pos >= self.line as i64 - 8 && y_pos < self.line as i64 {
+                    let tile = self.get_tile(index, false);
+                    self.draw_tile(tile, x_pos, y_pos, Some(attributes));
+                };
+            });
     }
 
     /// This method draws the background tile map. The background is scrollable and will wrap
@@ -275,7 +299,13 @@ impl Video {
     ///
     /// todo: implement wrapping
     fn draw_background(&mut self) {
-        let tile_map_row = self.line as u64 / 8;
+        let tile_map_row = (self.line as i64 - self.scy as i64) / 8;
+        let tile_map_row = if tile_map_row < 0 {
+            (32-tile_map_row) as u64
+        } else {
+            tile_map_row as u64
+        };
+
         self.vram
             .set_position((BACKGROUND_MAP_START - VRAM_START) as u64 + tile_map_row * 32);
         let mut tile_map = [0; 32];
@@ -286,10 +316,10 @@ impl Video {
                 *tile_index,
                 !self.lcd_control.contains(LcdControl::WINDOW_BG_ADDRES_MODE),
             );
-            let anchor_x = ((i as u64 % 32) * 8) + self.scx as u64;
-            let anchor_y = tile_map_row * 8 + self.scy as u64;
+            let anchor_x = ((i as i64 % 32) * 8) - self.scx as i64;
+            let anchor_y = tile_map_row as i64 * 8 - self.scy as i64;
 
-            self.draw_tile(tile, anchor_x as i64, anchor_y as i64, false);
+            self.draw_tile(tile, anchor_x, anchor_y, None);
         });
     }
 
@@ -307,10 +337,10 @@ impl Video {
                 *tile_index,
                 !self.lcd_control.contains(LcdControl::WINDOW_BG_ADDRES_MODE),
             );
-            let anchor_x = ((i as u64 % 32) * 8) + self.scx as u64;
-            let anchor_y = tile_map_row * 8 + self.scy as u64;
+            let anchor_x = ((i as i64 % 32) * 8) - self.window_x as i64 - 7;
+            let anchor_y = tile_map_row as i64 * 8 - self.window_y as i64;
 
-            self.draw_tile(tile, anchor_x as i64, anchor_y as i64, false);
+            self.draw_tile(tile, anchor_x, anchor_y, None);
         });
     }
 
@@ -319,7 +349,7 @@ impl Video {
             let tile = self.get_tile(x as u8, false);
             let anchor_x = (x % (SCREEN_WIDTH as u64 / 8)) * 8;
             let anchor_y = (x / (SCREEN_WIDTH as u64 / 8)) * 8;
-            self.draw_tile(tile, anchor_x as i64, anchor_y as i64, false);
+            self.draw_tile(tile, anchor_x as i64, anchor_y as i64, None);
         }
     }
 
@@ -329,7 +359,14 @@ impl Video {
     /// window have no transparency.
     ///
     /// todo: implement transparency
-    fn draw_tile(&mut self, tile: Tile, anchor_x: i64, anchor_y: i64, transparent: bool) {
+    fn draw_tile(
+        &mut self,
+        tile: Tile,
+        anchor_x: i64,
+        anchor_y: i64,
+        object_attributes: Option<ObjectAttributes>,
+    ) {
+
         if anchor_x < -8
             || anchor_y < -8
             || anchor_x > SCREEN_WIDTH as i64
@@ -338,7 +375,19 @@ impl Video {
             return;
         }
 
-        let tile_line_index = self.line as i64 - anchor_y;
+        let x_flip = if let Some(attributes) = object_attributes {
+            attributes.contains(ObjectAttributes::X_FLIP)
+        } else {
+            false
+        };
+
+        let mut tile_line_index = self.line as i64 - anchor_y;
+
+        if let Some(attributes) = object_attributes {
+            if attributes.contains(ObjectAttributes::Y_FLIP) {
+                tile_line_index = 8 - tile_line_index;
+            }
+        }
 
         if !(0..8).contains(&tile_line_index) {
             return;
@@ -357,13 +406,23 @@ impl Video {
                 + line_clip_start as u64,
         );
 
-        let row_scaled: Vec<u8> = tile[start_pos..end_pos]
-            .iter()
-            .skip(anchor_x.min(0).unsigned_abs() as usize)
-            .map(|x| x * 60)
-            .collect();
+        let row_scaled: Vec<u8> = if x_flip {
+            tile[start_pos..end_pos]
+                .iter()
+                .rev()
+                .skip(anchor_x.min(0).unsigned_abs() as usize)
+                .map(|x| x * 60)
+                .collect()
+        } else {
+            tile[start_pos..end_pos]
+                .iter()
+                .skip(anchor_x.min(0).unsigned_abs() as usize)
+                .map(|x| x * 60)
+                .collect()
+        };
 
-        if !transparent {
+        // objects are transparent
+        if object_attributes.is_none() {
             let _ = self.screen_buffer.write(&row_scaled).unwrap();
         } else {
             row_scaled.iter().for_each(|x| {
