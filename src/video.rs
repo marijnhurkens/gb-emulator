@@ -273,9 +273,9 @@ impl Video {
             })
             .filter(|(y_pos, _, _, _)| {
                 if self.lcd_control.contains(LcdControl::OBJ_SIZE) {
-                    y_pos + 16 >= self.line as i64 && *y_pos < self.line as i64
+                    y_pos + 16 > self.line as i64 && *y_pos <= self.line as i64
                 } else {
-                    y_pos + 8 >= self.line as i64 && *y_pos < self.line as i64
+                    y_pos + 8 > self.line as i64 && *y_pos <= self.line as i64
                 }
             })
             .take(10)
@@ -289,16 +289,14 @@ impl Video {
             .into_iter()
             .for_each(|(y_pos, x_pos, index, attributes)| {
                 if self.lcd_control.contains(LcdControl::OBJ_SIZE) {
-                    if y_pos >= self.line as i64 - 8 && y_pos < self.line as i64 {
+                    if y_pos + 8 > self.line as i64 && y_pos <= self.line as i64 {
                         let tile1 = self.get_tile(index & 0xFE, false);
                         self.draw_tile(tile1, x_pos, y_pos, Some(attributes));
-                    }
-
-                    if y_pos >= self.line as i64 - 16 && y_pos < self.line as i64 {
+                    } else if y_pos + 16 > self.line as i64 && y_pos + 8 <= self.line as i64 {
                         let tile2 = self.get_tile(index | 0x01, false);
                         self.draw_tile(tile2, x_pos, y_pos + 8, Some(attributes));
                     }
-                } else if y_pos >= self.line as i64 - 8 && y_pos < self.line as i64 {
+                } else if y_pos + 8 > self.line as i64 && y_pos <= self.line as i64 {
                     let tile = self.get_tile(index, false);
                     self.draw_tile(tile, x_pos, y_pos, Some(attributes));
                 };
@@ -400,6 +398,7 @@ impl Video {
         }
 
         if !(0..8).contains(&tile_line_index) {
+            //panic!("should not happen");
             return;
         }
 

@@ -9,9 +9,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use clap::{arg, Parser};
-use ggez::conf::WindowSetup;
+use ggez::conf::{WindowMode, WindowSetup};
 use ggez::event::EventHandler;
-use ggez::graphics::{Color, DrawParam, Image, ImageFormat};
+use ggez::graphics::{Color, DrawParam, Image, ImageFormat, Sampler};
 use ggez::input::keyboard::KeyCode;
 use ggez::mint::Vector2;
 use ggez::{event, graphics, Context, ContextBuilder, GameResult};
@@ -131,6 +131,8 @@ fn main() {
         .build()
         .expect("Error creating context.");
 
+    ctx.gfx.set_mode(WindowMode::default().resizable(true));
+
     let state = State::new(&mut ctx, screen_buffer, key_state);
 
     event::run(ctx, event_loop, state);
@@ -186,7 +188,15 @@ impl EventHandler for State {
         );
         drop(guard);
 
-        let scale = Vector2::<f32> { x: 4.0, y: 4.0 };
+        let window_size = ctx.gfx.window().inner_size();
+        let scale = if window_size.width as f32 / window_size.height as f32 > SCREEN_WIDTH as f32 / SCREEN_HEIGHT as f32 {
+            window_size.height as f32 / SCREEN_HEIGHT as f32
+        } else {
+            window_size.width as f32 / SCREEN_WIDTH as f32
+        };
+
+        let scale = Vector2::<f32> { x: scale, y: scale };
+        canvas.set_sampler(Sampler::nearest_clamp());
         canvas.draw(&image, DrawParam::new().scale(scale));
         canvas.finish(ctx)
     }
