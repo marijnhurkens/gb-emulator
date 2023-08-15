@@ -44,11 +44,7 @@ impl Mbc for Mbc1 {
     fn write_rom(&mut self, pos: u16, val: u8) {
         match pos {
             0x0000..=0x1FFF => {
-                if (val & 0xF) == 0xA {
-                    self.ram_enable = true;
-                } else {
-                    self.ram_enable = false;
-                }
+                self.ram_enable = (val & 0xF) == 0xA;
             }
             0x2000..=0x3FFF => {
                 // check if the first 5 bits are 0, and set to bank 1 if this is the case

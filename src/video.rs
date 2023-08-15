@@ -3,8 +3,8 @@ use std::io::{Cursor, Read, Write};
 use bitflags::bitflags;
 use byteorder::{ReadBytesExt, WriteBytesExt};
 
-use crate::{helpers, SCREEN_BUFFER_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH};
 use crate::mmu::InterruptFlags;
+use crate::{helpers, SCREEN_BUFFER_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 pub const VRAM_START: u16 = 0x8000;
 const VRAM_END: u16 = 0xA000;
@@ -283,7 +283,7 @@ impl Video {
 
         // Objects with the lowest x coord have the highest priority.
         // This means we should draw them last.
-        //objects.sort_by(|a,b| b.1.cmp(&a.1));
+        objects.sort_by(|a, b| b.1.cmp(&a.1));
 
         objects
             .into_iter()
@@ -312,7 +312,7 @@ impl Video {
     fn draw_background(&mut self) {
         let tile_map_row = (self.line as i64 - self.scy as i64) / 8;
         let tile_map_row = if tile_map_row < 0 {
-            (32-tile_map_row) as u64
+            (32 - tile_map_row) as u64
         } else {
             tile_map_row as u64
         };
@@ -377,7 +377,6 @@ impl Video {
         anchor_y: i64,
         object_attributes: Option<ObjectAttributes>,
     ) {
-
         if anchor_x < -8
             || anchor_y < -8
             || anchor_x > SCREEN_WIDTH as i64
@@ -433,21 +432,22 @@ impl Video {
                 .iter()
                 .rev()
                 .skip(anchor_x.min(0).unsigned_abs() as usize)
-                .map(|x|(*x, self.index_to_color(*x, palette)))
+                .map(|x| (*x, self.index_to_color(*x, palette)))
                 .collect()
         } else {
             tile[start_pos..end_pos]
                 .iter()
                 .skip(anchor_x.min(0).unsigned_abs() as usize)
-                .map(|x|(*x, self.index_to_color(*x, palette)))
+                .map(|x| (*x, self.index_to_color(*x, palette)))
                 .collect()
         };
 
         // objects are transparent
         if object_attributes.is_none() {
-            let _ = self.screen_buffer.write(
-                &row_scaled.iter().map(|x| x.1).collect::<Vec<u8>>()
-            ).unwrap();
+            let _ = self
+                .screen_buffer
+                .write(&row_scaled.iter().map(|x| x.1).collect::<Vec<u8>>())
+                .unwrap();
         } else {
             row_scaled.iter().for_each(|x| {
                 if x.0 == 0 {
@@ -493,8 +493,7 @@ impl Video {
         pixels
     }
 
-    fn index_to_color(&self, index: u8, palette: Palette) -> u8
-    {
+    fn index_to_color(&self, index: u8, palette: Palette) -> u8 {
         let mask = 0b00000011;
 
         let palette_data = match palette {
@@ -505,14 +504,14 @@ impl Video {
 
         // bit 0 and 1 of a palette maps the color for index 0
         // bit 2 and 3 maps the color for index 1, etc.
-        let color = (palette_data & (mask << (index*2))) >> (index*2);
+        let color = (palette_data & (mask << (index * 2))) >> (index * 2);
 
         match color {
             0 => 240,
             1 => 100,
             2 => 50,
             3 => 0,
-            _ => panic!("Unknown color")
+            _ => panic!("Unknown color"),
         }
     }
 }
