@@ -3,8 +3,8 @@ use std::io::{Cursor, Read, Write};
 use bitflags::bitflags;
 use byteorder::{ReadBytesExt, WriteBytesExt};
 
-use crate::mmu::InterruptFlags;
 use crate::{helpers, SCREEN_BUFFER_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH};
+use crate::mmu::InterruptFlags;
 
 pub const VRAM_START: u16 = 0x8000;
 const VRAM_END: u16 = 0xA000;
@@ -51,6 +51,13 @@ pub enum VideoMode {
     VramRead = 3,
     HBlank = 0,
     VBlank = 1,
+}
+
+#[derive(Debug, Copy, Clone)]
+enum Palette {
+    Obj0,
+    Obj1,
+    Bg,
 }
 
 bitflags! {
@@ -240,7 +247,7 @@ impl Video {
         if self.lcd_control.contains(LcdControl::WINDOW_BG_DISPLAY) {
             self.draw_background();
             if self.lcd_control.contains(LcdControl::WINDOW_ENABLE) {
-                self.draw_window();
+                //self.draw_window();
             }
         }
 
@@ -254,7 +261,7 @@ impl Video {
         self.oam.set_position(0);
         self.oam.read_exact(&mut data).unwrap();
 
-        let objects: Vec<_> = data
+        let mut objects: Vec<_> = data
             .chunks(4)
             .map(|object| {
                 (
@@ -273,6 +280,10 @@ impl Video {
             })
             .take(10)
             .collect();
+
+        // Objects with the lowest x coord have the highest priority.
+        // This means we should draw them last.
+        //objects.sort_by(|a,b| b.1.cmp(&a.1));
 
         objects
             .into_iter()
@@ -406,31 +417,44 @@ impl Video {
                 + line_clip_start as u64,
         );
 
-        let row_scaled: Vec<u8> = if x_flip {
+        let palette = if let Some(attributes) = object_attributes {
+            if attributes.contains(ObjectAttributes::PALETTE) {
+                Palette::Obj1
+            } else {
+                Palette::Obj0
+            }
+        } else {
+            Palette::Bg
+        };
+
+        // note: after mapping the original color index and the mapped color are put together in a tuple
+        let row_scaled: Vec<(u8, u8)> = if x_flip {
             tile[start_pos..end_pos]
                 .iter()
                 .rev()
                 .skip(anchor_x.min(0).unsigned_abs() as usize)
-                .map(|x| x * 60)
+                .map(|x|(*x, self.index_to_color(*x, palette)))
                 .collect()
         } else {
             tile[start_pos..end_pos]
                 .iter()
                 .skip(anchor_x.min(0).unsigned_abs() as usize)
-                .map(|x| x * 60)
+                .map(|x|(*x, self.index_to_color(*x, palette)))
                 .collect()
         };
 
         // objects are transparent
         if object_attributes.is_none() {
-            let _ = self.screen_buffer.write(&row_scaled).unwrap();
+            let _ = self.screen_buffer.write(
+                &row_scaled.iter().map(|x| x.1).collect::<Vec<u8>>()
+            ).unwrap();
         } else {
             row_scaled.iter().for_each(|x| {
-                if *x == 0 {
+                if x.0 == 0 {
                     self.screen_buffer
                         .set_position(self.screen_buffer.position() + 1);
                 } else {
-                    self.screen_buffer.write_u8(*x).unwrap();
+                    self.screen_buffer.write_u8(x.1).unwrap();
                 }
             })
         }
@@ -467,6 +491,29 @@ impl Video {
             .unwrap();
 
         pixels
+    }
+
+    fn index_to_color(&self, index: u8, palette: Palette) -> u8
+    {
+        let mask = 0b00000011;
+
+        let palette_data = match palette {
+            Palette::Obj0 => self.obj_1_palette,
+            Palette::Obj1 => self.obj_1_palette,
+            Palette::Bg => self.bg_palette,
+        };
+
+        // bit 0 and 1 of a palette maps the color for index 0
+        // bit 2 and 3 maps the color for index 1, etc.
+        let color = (palette_data & (mask << (index*2))) >> (index*2);
+
+        match color {
+            0 => 240,
+            1 => 100,
+            2 => 50,
+            3 => 0,
+            _ => panic!("Unknown color")
+        }
     }
 }
 
