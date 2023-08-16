@@ -131,7 +131,9 @@ fn main() {
         .build()
         .expect("Error creating context.");
 
-    ctx.gfx.set_mode(WindowMode::default().resizable(true));
+    ctx.gfx
+        .set_mode(WindowMode::default().resizable(true))
+        .unwrap();
 
     let state = State::new(&mut ctx, screen_buffer, key_state);
 
@@ -189,7 +191,9 @@ impl EventHandler for State {
         drop(guard);
 
         let window_size = ctx.gfx.window().inner_size();
-        let scale = if window_size.width as f32 / window_size.height as f32 > SCREEN_WIDTH as f32 / SCREEN_HEIGHT as f32 {
+        let scale = if window_size.width as f32 / window_size.height as f32
+            > SCREEN_WIDTH as f32 / SCREEN_HEIGHT as f32
+        {
             window_size.height as f32 / SCREEN_HEIGHT as f32
         } else {
             window_size.width as f32 / SCREEN_WIDTH as f32

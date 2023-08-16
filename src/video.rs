@@ -411,14 +411,13 @@ impl Video {
 
         let tile_line_index = tile_line_index as usize;
 
-        let line_clip_start = 0;//anchor_x.min(0).unsigned_abs() as usize;
+        let line_clip_start = 0; //anchor_x.min(0).unsigned_abs() as usize;
         let line_clip_end = (anchor_x + 8 - SCREEN_WIDTH as i64).max(0) as usize;
         let start_pos = tile_line_index * 8 + line_clip_start;
         let end_pos = start_pos + 8 - line_clip_end - line_clip_start;
 
-        self.screen_buffer.set_position(
-            self.line as u64 * SCREEN_WIDTH as u64 + anchor_x.max(0) as u64
-        );
+        self.screen_buffer
+            .set_position(self.line as u64 * SCREEN_WIDTH as u64 + anchor_x.max(0) as u64);
 
         let palette = if let Some(attributes) = object_attributes {
             if attributes.contains(ObjectAttributes::PALETTE) {
