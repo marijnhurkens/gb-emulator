@@ -247,7 +247,7 @@ impl Video {
         if self.lcd_control.contains(LcdControl::WINDOW_BG_DISPLAY) {
             self.draw_background();
             if self.lcd_control.contains(LcdControl::WINDOW_ENABLE) {
-                //self.draw_window();
+                self.draw_window();
             }
         }
 
@@ -329,15 +329,22 @@ impl Video {
             let anchor_y = tile_map_row as i64 * 8 - self.scy as i64;
 
             self.draw_tile(tile, anchor_x, anchor_y, None);
+
+            if self.scx > 255 - SCREEN_WIDTH as u8 {
+                self.draw_tile(tile, anchor_x + 256, anchor_y, None);
+            }
         });
     }
 
     /// The window is just tile map which can be drawn as a rectangle. It can be positioned
     /// but it will not wrap around. It has no transparency so the use is limited.
     fn draw_window(&mut self) {
-        let tile_map_row = self.line as u64 / 8;
+        let tile_map_row = (self.line as i64 - self.window_y as i64) / 8;
+        if tile_map_row < 0 {
+            return;
+        }
         self.vram
-            .set_position((WINDOW_MAP_START - VRAM_START) as u64 + tile_map_row * 32);
+            .set_position((WINDOW_MAP_START - VRAM_START) as u64 + tile_map_row as u64 * 32);
         let mut tile_map = [0; 32];
         self.vram.read_exact(&mut tile_map).unwrap();
 
@@ -346,8 +353,8 @@ impl Video {
                 *tile_index,
                 !self.lcd_control.contains(LcdControl::WINDOW_BG_ADDRES_MODE),
             );
-            let anchor_x = ((i as i64 % 32) * 8) - self.window_x as i64 - 7;
-            let anchor_y = tile_map_row as i64 * 8 - self.window_y as i64;
+            let anchor_x = ((i as i64 % 32) * 8) + self.window_x as i64 - 7;
+            let anchor_y = tile_map_row * 8 + self.window_y as i64;
 
             self.draw_tile(tile, anchor_x, anchor_y, None);
         });
@@ -404,15 +411,13 @@ impl Video {
 
         let tile_line_index = tile_line_index as usize;
 
-        let line_clip_start = anchor_x.min(0).unsigned_abs() as usize;
+        let line_clip_start = 0;//anchor_x.min(0).unsigned_abs() as usize;
         let line_clip_end = (anchor_x + 8 - SCREEN_WIDTH as i64).max(0) as usize;
         let start_pos = tile_line_index * 8 + line_clip_start;
         let end_pos = start_pos + 8 - line_clip_end - line_clip_start;
 
         self.screen_buffer.set_position(
-            self.line as u64 * SCREEN_WIDTH as u64
-                + anchor_x.max(0) as u64
-                + line_clip_start as u64,
+            self.line as u64 * SCREEN_WIDTH as u64 + anchor_x.max(0) as u64
         );
 
         let palette = if let Some(attributes) = object_attributes {
