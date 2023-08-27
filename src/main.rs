@@ -5,29 +5,30 @@ extern crate core;
 use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::fs::File;
-use std::io::{Read, stdout};
+use std::io::{stdout, Read};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use crate::apu::Apu;
 use clap::{arg, Parser};
-use cpal::{SampleFormat, SampleRate, Stream};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use ggez::{Context, ContextBuilder, event, GameResult, graphics};
+use cpal::{SampleFormat, SampleRate, Stream};
 use ggez::conf::{WindowMode, WindowSetup};
 use ggez::event::EventHandler;
 use ggez::graphics::{Color, DrawParam, Image, ImageFormat, Sampler};
 use ggez::input::keyboard::KeyCode;
 use ggez::mint::Vector2;
+use ggez::{event, graphics, Context, ContextBuilder, GameResult};
 use tracing::Level;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::Registry;
-use crate::apu::Apu;
 
 use crate::cartridge::Cartridge;
 use crate::cpu::Cpu;
 use crate::mmu::MMU;
 
+mod apu;
 mod cartridge;
 mod cpu;
 mod helpers;
@@ -35,7 +36,6 @@ mod instructions;
 mod mbc;
 mod mmu;
 mod video;
-mod apu;
 
 const SCREEN_WIDTH: u32 = 160;
 const SCREEN_HEIGHT: u32 = 144;
@@ -74,7 +74,7 @@ struct State {
     key_state: Arc<Mutex<KeyState>>,
     redraw: bool,
     audio_buffer: Arc<Mutex<VecDeque<i16>>>,
-    stream: Stream
+    stream: Stream,
 }
 
 fn main() {
@@ -147,7 +147,13 @@ fn main() {
         .set_mode(WindowMode::default().resizable(true))
         .unwrap();
 
-    let state = State::new(&mut ctx, screen_buffer, key_state, audio_buffer, audio_stream);
+    let state = State::new(
+        &mut ctx,
+        screen_buffer,
+        key_state,
+        audio_buffer,
+        audio_stream,
+    );
 
     event::run(ctx, event_loop, state);
 }
@@ -158,7 +164,7 @@ impl State {
         screen_buffer: Arc<Mutex<ScreenBuffer>>,
         key_state: Arc<Mutex<KeyState>>,
         audio_buffer: Arc<Mutex<VecDeque<i16>>>,
-        stream: Stream
+        stream: Stream,
     ) -> State {
         State {
             screen_buffer,
@@ -172,7 +178,6 @@ impl State {
 
 impl EventHandler for State {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
-
         while ctx.time.check_update_time(60) {
             self.redraw = true;
 
@@ -229,18 +234,20 @@ impl EventHandler for State {
         canvas.draw(&image, DrawParam::new().scale(scale));
 
         canvas.finish(ctx)
-
     }
 }
 
-fn setup_audio() -> (Stream, Arc<Mutex<VecDeque<i16>>>)
-{
+fn setup_audio() -> (Stream, Arc<Mutex<VecDeque<i16>>>) {
     let host = cpal::default_host();
-    let device = host.default_output_device().expect("no output device available");
+    let device = host
+        .default_output_device()
+        .expect("no output device available");
 
-    let mut supported_configs_range = device.supported_output_configs()
+    let mut supported_configs_range = device
+        .supported_output_configs()
         .expect("error while querying configs");
-    let supported_config = supported_configs_range.next()
+    let supported_config = supported_configs_range
+        .next()
         .expect("no supported config?!")
         .with_sample_rate(SampleRate(44_100));
     let sample_format = supported_config.sample_format();
@@ -261,8 +268,9 @@ fn setup_audio() -> (Stream, Arc<Mutex<VecDeque<i16>>>)
 
     let stream = match sample_format {
         SampleFormat::F32 => device.build_output_stream(&config, write_buffer_fn, err_fn, None),
-        sample_format => panic!("Unsupported sample format '{sample_format}'")
-    }.unwrap();
+        sample_format => panic!("Unsupported sample format '{sample_format}'"),
+    }
+    .unwrap();
 
     stream.play().unwrap();
 

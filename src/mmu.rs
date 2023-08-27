@@ -8,9 +8,9 @@ use tracing::{event, Level};
 
 use crate::apu::Apu;
 use crate::cpu::CPU_FREQ;
-use crate::KeyState;
 use crate::mbc::Mbc;
 use crate::video::{LcdControl, LcdStatus, Video, VRAM_START};
+use crate::KeyState;
 
 const MEM_SIZE: usize = 1024 * 128;
 const DIVIDER_REG_CYCLES_PER_STEP: u32 = (16_384 / CPU_FREQ) * CPU_FREQ;

@@ -6,7 +6,12 @@ use blip_buf::BlipBuf;
 
 const CLOCK_RATE: u32 = 4_194_304;
 const SAMPLE_RATE: u32 = 44_100;
-const WAVE_PATTERN : [[i32; 8]; 4] = [[-1,-1,-1,-1,1,-1,-1,-1],[-1,-1,-1,-1,1,1,-1,-1],[-1,-1,1,1,1,1,-1,-1],[1,1,1,1,-1,-1,1,1]];
+const WAVE_PATTERN: [[i32; 8]; 4] = [
+    [-1, -1, -1, -1, 1, -1, -1, -1],
+    [-1, -1, -1, -1, 1, 1, -1, -1],
+    [-1, -1, 1, 1, 1, 1, -1, -1],
+    [1, 1, 1, 1, -1, -1, 1, 1],
+];
 
 pub struct Apu {
     audio_buffer: Arc<Mutex<VecDeque<i16>>>,
@@ -15,8 +20,7 @@ pub struct Apu {
 }
 
 impl Apu {
-    pub fn new() -> Apu
-    {
+    pub fn new() -> Apu {
         Apu {
             audio_buffer: Arc::new(Mutex::new(VecDeque::new())),
             channel_status: ChannelStatus::empty(),
@@ -24,8 +28,7 @@ impl Apu {
         }
     }
 
-    pub fn new_with_buffer(audio_buffer: Arc<Mutex<VecDeque<i16>>>) -> Apu
-    {
+    pub fn new_with_buffer(audio_buffer: Arc<Mutex<VecDeque<i16>>>) -> Apu {
         Apu {
             audio_buffer,
             channel_status: ChannelStatus::empty(),
@@ -33,15 +36,16 @@ impl Apu {
         }
     }
 
-    pub fn step(&mut self)
-    {
+    pub fn step(&mut self) {
         self.channel_square_one.step();
     }
 
-    pub fn write_register(&mut self, reg: u16, value: u8)
-    {
+    pub fn write_register(&mut self, reg: u16, value: u8) {
         match reg {
-            0xff26 => self.channel_status = ChannelStatus::from_bits(value & ChannelStatus::ALL_ENABLED.bits).unwrap(),
+            0xff26 => {
+                self.channel_status =
+                    ChannelStatus::from_bits(value & ChannelStatus::ALL_ENABLED.bits).unwrap()
+            }
             _ => panic!("Unknown audio register"),
         };
     }
@@ -53,31 +57,26 @@ impl Apu {
         }
     }
 
-    pub fn output(&mut self)
-    {
+    pub fn output(&mut self) {
         self.mix_buffers();
         self.channel_square_one.time = 0;
     }
 
-    fn mix_buffers(&mut self)
-    {
-       // self.channel_square_one.blip_buf.add_delta(self.channel_square_one.time, -self.channel_square_one.amplitude);
-
-        self.channel_square_one.blip_buf.end_frame(self.channel_square_one.time);
+    fn mix_buffers(&mut self) {
+        self.channel_square_one
+            .blip_buf
+            .end_frame(self.channel_square_one.time);
         let samples_available = self.channel_square_one.blip_buf.samples_avail() as usize;
         let mut buffer = [0; 2000 + 60];
-        self.channel_square_one.blip_buf.read_samples(&mut buffer, false);
+        self.channel_square_one
+            .blip_buf
+            .read_samples(&mut buffer, false);
 
-
-        // dbg!(buffer);
-        // panic!();
         let mut buffer_lock = self.audio_buffer.lock().unwrap();
-        for i in 0..samples_available {
-
-            buffer_lock.push_back(buffer[i]);
-            buffer_lock.push_back(buffer[i]);
+        for sample in buffer.iter().take(samples_available) {
+            buffer_lock.push_back(*sample);
+            buffer_lock.push_back(*sample);
         }
-
     }
 }
 
@@ -92,10 +91,9 @@ struct ChannelSquareOne {
 }
 
 impl ChannelSquareOne {
-    pub fn new() -> ChannelSquareOne
-    {
+    pub fn new() -> ChannelSquareOne {
         let mut blip = BlipBuf::new(4000 + 10);
-        blip.set_rates(CLOCK_RATE as f64, 44_100.0 );
+        blip.set_rates(CLOCK_RATE as f64, 44_100.0);
         ChannelSquareOne {
             time: 0,
             timer_div: 0,
@@ -107,9 +105,7 @@ impl ChannelSquareOne {
         }
     }
 
-
-    pub fn step(&mut self)
-    {
+    pub fn step(&mut self) {
         self.timer_div += 1;
 
         let timer_clocked = if self.timer_div == 4 {
@@ -132,10 +128,9 @@ impl ChannelSquareOne {
                 self.time += 1;
             }
 
-            self.phase = (self.phase + 1)%8;
+            self.phase = (self.phase + 1) % 8;
         }
     }
-
 }
 
 struct Timer {
@@ -143,22 +138,18 @@ struct Timer {
     period_div: u32,
 }
 
-impl Timer
-{
-    pub fn new() -> Timer
-    {
+impl Timer {
+    pub fn new() -> Timer {
         Timer {
             period: 0x400,
             period_div: 0x400,
         }
     }
 
-    pub fn step(&mut self) -> bool
-    {
+    pub fn step(&mut self) -> bool {
         self.period_div += 1;
 
-        if self.period_div == 0x800
-        {
+        if self.period_div == 0x800 {
             self.period_div = self.period;
             return true;
         }

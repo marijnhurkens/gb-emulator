@@ -3,8 +3,8 @@ use std::io::{Cursor, Read, Write};
 use bitflags::bitflags;
 use byteorder::{ReadBytesExt, WriteBytesExt};
 
-use crate::{helpers, SCREEN_BUFFER_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH};
 use crate::mmu::InterruptFlags;
+use crate::{helpers, SCREEN_BUFFER_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 pub const VRAM_START: u16 = 0x8000;
 const VRAM_END: u16 = 0xA000;
@@ -318,7 +318,8 @@ impl Video {
         } else {
             TILE_MAP_1_START
         };
-        self.vram.set_position((tile_map_start - VRAM_START) as u64 + tile_map_row * 32);
+        self.vram
+            .set_position((tile_map_start - VRAM_START) as u64 + tile_map_row * 32);
         let mut tile_map = [0; 32];
         self.vram.read_exact(&mut tile_map).unwrap();
 

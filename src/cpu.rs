@@ -8,7 +8,7 @@ use console::Term;
 use tracing::{event, Level};
 
 use crate::instructions::{
-    Add, Condition, decode, ImmediateOperand, Instruction, InstructionCB, Load, MemoryLocation,
+    decode, Add, Condition, ImmediateOperand, Instruction, InstructionCB, Load, MemoryLocation,
     Operand, Register, RegisterPair,
 };
 use crate::mmu::{InterruptFlags, MMU};
@@ -114,10 +114,7 @@ impl Cpu {
         }
     }
 
-    pub fn cycle(
-        &mut self,
-        screen_buffer: &Option<Arc<Mutex<ScreenBuffer>>>,
-    ) {
+    pub fn cycle(&mut self, screen_buffer: &Option<Arc<Mutex<ScreenBuffer>>>) {
         if self.pc as usize > 0xFFFF {
             panic!("PC out of bounds");
         }
@@ -177,9 +174,7 @@ impl Cpu {
 
             self.mmu.step();
             self.mmu.apu.step();
-
         }
-
 
         self.mmu.handle_serial();
     }
@@ -1747,11 +1742,11 @@ impl Cpu {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use crate::{Cartridge, Cpu, KeyState, mbc};
     use crate::apu::Apu;
     use crate::cartridge::CartridgeHeader;
     use crate::cpu::{CpuState, STACK_START};
     use crate::mmu::MMU;
+    use crate::{mbc, Cartridge, Cpu, KeyState};
 
     #[test]
     fn it_executes_call() {
