@@ -3,8 +3,8 @@ use std::io::{Cursor, Read, Write};
 use bitflags::bitflags;
 use byteorder::{ReadBytesExt, WriteBytesExt};
 
-use crate::mmu::InterruptFlags;
 use crate::{helpers, SCREEN_BUFFER_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH};
+use crate::mmu::InterruptFlags;
 
 pub const VRAM_START: u16 = 0x8000;
 const VRAM_END: u16 = 0xA000;
@@ -14,12 +14,10 @@ const OAM_START: u16 = 0xFE00;
 const OAM_END: u16 = 0xFE9F;
 const OAM_SIZE: u16 = OAM_END + 1 - OAM_START;
 
-const BACKGROUND_MAP_START: u16 = 0x9800;
-const BACKGROUND_MAP_END: u16 = 0x9BFF;
-const BACKGROUND_MAP_SIZE: u16 = BACKGROUND_MAP_END + 1 - BACKGROUND_MAP_START;
-const WINDOW_MAP_START: u16 = 0x9C00;
-const WINDOW_MAP_END: u16 = 0x9FFF;
-const WINDOW_MAP_SIZE: u16 = WINDOW_MAP_END + 1 - WINDOW_MAP_START;
+const TILE_MAP_1_START: u16 = 0x9800;
+const TILE_MAP_1_END: u16 = 0x9BFF;
+const TILE_MAP_2_START: u16 = 0x9C00;
+const TILE_MAP_2_END: u16 = 0x9FFF;
 
 #[derive(Debug)]
 pub struct Video {
@@ -177,7 +175,7 @@ impl Video {
                     self.line += 1;
 
                     if self.line > 153 {
-                        self.clear_screen_buffer();
+                        //self.clear_screen_buffer();
                         self.mode = VideoMode::OamRead;
                         self.line = 0;
                         self.lcd_status -= LcdStatus::ALL_MODE_FLAGS;
@@ -315,8 +313,12 @@ impl Video {
             tile_map_row as u64
         };
 
-        self.vram
-            .set_position((BACKGROUND_MAP_START - VRAM_START) as u64 + tile_map_row * 32);
+        let tile_map_start = if self.lcd_control.contains(LcdControl::BG_TILE_MAP) {
+            TILE_MAP_2_START
+        } else {
+            TILE_MAP_1_START
+        };
+        self.vram.set_position((tile_map_start - VRAM_START) as u64 + tile_map_row * 32);
         let mut tile_map = [0; 32];
         self.vram.read_exact(&mut tile_map).unwrap();
 
@@ -344,7 +346,7 @@ impl Video {
             return;
         }
         self.vram
-            .set_position((WINDOW_MAP_START - VRAM_START) as u64 + tile_map_row as u64 * 32);
+            .set_position((TILE_MAP_2_START - VRAM_START) as u64 + tile_map_row as u64 * 32);
         let mut tile_map = [0; 32];
         self.vram.read_exact(&mut tile_map).unwrap();
 

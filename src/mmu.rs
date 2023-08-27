@@ -6,13 +6,14 @@ use bitvec::macros::internal::funty::Fundamental;
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use tracing::{event, Level};
 
+use crate::apu::Apu;
 use crate::cpu::CPU_FREQ;
+use crate::KeyState;
 use crate::mbc::Mbc;
 use crate::video::{LcdControl, LcdStatus, Video, VRAM_START};
-use crate::KeyState;
 
 const MEM_SIZE: usize = 1024 * 128;
-const DIVIDER_REG_CYCLES_PER_STEP: u32 = ((16_384.0 / CPU_FREQ) * CPU_FREQ) as u32;
+const DIVIDER_REG_CYCLES_PER_STEP: u32 = (16_384 / CPU_FREQ) * CPU_FREQ;
 
 bitflags! {
     pub struct InterruptFlags: u8 {
@@ -41,6 +42,7 @@ pub struct MMU {
     mbc: Box<dyn Mbc>,
     storage: Cursor<Vec<u8>>,
     pub video: Video,
+    pub apu: Apu,
     pub interrupt_flags: InterruptFlags,
     pub interrupt_enable: InterruptFlags,
     div_step: u32,
@@ -58,10 +60,11 @@ pub struct MMU {
 }
 
 impl MMU {
-    pub fn new(mbc: Box<dyn Mbc>, key_state: Arc<Mutex<KeyState>>) -> Self {
+    pub fn new(mbc: Box<dyn Mbc>, apu: Apu, key_state: Arc<Mutex<KeyState>>) -> Self {
         Self {
             mbc,
             video: Video::new(),
+            apu,
             key_state,
             storage: Cursor::new(vec![0x0; MEM_SIZE]),
             interrupt_flags: InterruptFlags::VBLANK,

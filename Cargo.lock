@@ -274,6 +274,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "blip_buf"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45c136cf50e8d0c47fe415008a6be8b50a9a56a6741fffbe2e580e007eda417d"
+dependencies = [
+ "blip_buf-sys",
+ "libc",
+]
+
+[[package]]
+name = "blip_buf-sys"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b84654178cd24117082f5cb10dbc0580425fc06aa02ae209171fe070cd4522e"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
 name = "block"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -911,10 +931,14 @@ version = "0.1.0"
 dependencies = [
  "bitflags 1.3.2",
  "bitvec",
+ "blip_buf",
  "byteorder",
  "clap",
  "console",
+ "cpal",
  "ggez",
+ "rand",
+ "rodio",
  "tracing",
  "tracing-subscriber",
 ]

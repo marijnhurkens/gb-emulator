@@ -8,13 +8,13 @@ use console::Term;
 use tracing::{event, Level};
 
 use crate::instructions::{
-    decode, Add, Condition, ImmediateOperand, Instruction, InstructionCB, Load, MemoryLocation,
+    Add, Condition, decode, ImmediateOperand, Instruction, InstructionCB, Load, MemoryLocation,
     Operand, Register, RegisterPair,
 };
 use crate::mmu::{InterruptFlags, MMU};
 use crate::ScreenBuffer;
 
-pub const CPU_FREQ: f64 = 4_194_304.0;
+pub const CPU_FREQ: u32 = 4_194_304;
 const STACK_START: u16 = 0xfffe;
 
 #[derive(Debug)]
@@ -67,6 +67,7 @@ pub struct Cpu {
     current_opcode: Option<u8>,
     current_instruction: Option<Instruction>,
     frame_start: Instant,
+    audio_step: u32,
 }
 
 impl Cpu {
@@ -94,6 +95,7 @@ impl Cpu {
             current_opcode: None,
             current_instruction: None,
             frame_start: Instant::now(),
+            audio_step: 0,
         }
     }
 
@@ -112,7 +114,10 @@ impl Cpu {
         }
     }
 
-    pub fn cycle(&mut self, screen_buffer: &Option<Arc<Mutex<ScreenBuffer>>>) {
+    pub fn cycle(
+        &mut self,
+        screen_buffer: &Option<Arc<Mutex<ScreenBuffer>>>,
+    ) {
         if self.pc as usize > 0xFFFF {
             panic!("PC out of bounds");
         }
@@ -164,8 +169,17 @@ impl Cpu {
         }
 
         for _ in 0..t_cycles {
+            self.audio_step += 1;
+            if self.audio_step > ((2000.0 / 44_100.0) * CPU_FREQ as f32) as u32 {
+                self.audio_step = 0;
+                self.mmu.apu.output();
+            }
+
             self.mmu.step();
+            self.mmu.apu.step();
+
         }
+
 
         self.mmu.handle_serial();
     }
@@ -1733,10 +1747,11 @@ impl Cpu {
 mod tests {
     use std::sync::{Arc, Mutex};
 
+    use crate::{Cartridge, Cpu, KeyState, mbc};
+    use crate::apu::Apu;
     use crate::cartridge::CartridgeHeader;
     use crate::cpu::{CpuState, STACK_START};
     use crate::mmu::MMU;
-    use crate::{mbc, Cartridge, Cpu, KeyState};
 
     #[test]
     fn it_executes_call() {
@@ -1750,6 +1765,7 @@ mod tests {
 
         let memory = MMU::new(
             mbc::from_cartridge(cartridge),
+            Apu::new(),
             Arc::new(Mutex::new(KeyState::default())),
         );
 
@@ -1774,6 +1790,7 @@ mod tests {
 
         let memory = MMU::new(
             mbc::from_cartridge(cartridge),
+            Apu::new(),
             Arc::new(Mutex::new(KeyState::default())),
         );
 

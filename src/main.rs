@@ -2,23 +2,27 @@
 
 extern crate core;
 
+use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::fs::File;
-use std::io::{stdout, Read};
+use std::io::{Read, stdout};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 use clap::{arg, Parser};
+use cpal::{SampleFormat, SampleRate, Stream};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use ggez::{Context, ContextBuilder, event, GameResult, graphics};
 use ggez::conf::{WindowMode, WindowSetup};
 use ggez::event::EventHandler;
 use ggez::graphics::{Color, DrawParam, Image, ImageFormat, Sampler};
 use ggez::input::keyboard::KeyCode;
 use ggez::mint::Vector2;
-use ggez::{event, graphics, Context, ContextBuilder, GameResult};
 use tracing::Level;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::Registry;
+use crate::apu::Apu;
 
 use crate::cartridge::Cartridge;
 use crate::cpu::Cpu;
@@ -31,6 +35,7 @@ mod instructions;
 mod mbc;
 mod mmu;
 mod video;
+mod apu;
 
 const SCREEN_WIDTH: u32 = 160;
 const SCREEN_HEIGHT: u32 = 144;
@@ -67,6 +72,9 @@ pub struct KeyState {
 struct State {
     screen_buffer: Arc<Mutex<ScreenBuffer>>,
     key_state: Arc<Mutex<KeyState>>,
+    redraw: bool,
+    audio_buffer: Arc<Mutex<VecDeque<i16>>>,
+    stream: Stream
 }
 
 fn main() {
@@ -114,8 +122,12 @@ fn main() {
     let cpu_screen_buffer = screen_buffer.clone();
     let key_state = Arc::new(Mutex::new(KeyState::default()));
 
+    let (audio_stream, audio_buffer) = setup_audio();
+    let audio_buffer_apu = audio_buffer.clone();
+
     let mbc = mbc::from_cartridge(cartridge);
-    let mmu = MMU::new(mbc, key_state.clone());
+    let apu = Apu::new_with_buffer(audio_buffer_apu);
+    let mmu = MMU::new(mbc, apu, key_state.clone());
     let mut cpu = Cpu::new(mmu);
 
     let break_point = args
@@ -135,7 +147,7 @@ fn main() {
         .set_mode(WindowMode::default().resizable(true))
         .unwrap();
 
-    let state = State::new(&mut ctx, screen_buffer, key_state);
+    let state = State::new(&mut ctx, screen_buffer, key_state, audio_buffer, audio_stream);
 
     event::run(ctx, event_loop, state);
 }
@@ -145,17 +157,25 @@ impl State {
         _ctx: &mut Context,
         screen_buffer: Arc<Mutex<ScreenBuffer>>,
         key_state: Arc<Mutex<KeyState>>,
+        audio_buffer: Arc<Mutex<VecDeque<i16>>>,
+        stream: Stream
     ) -> State {
         State {
             screen_buffer,
             key_state,
+            redraw: false,
+            audio_buffer,
+            stream,
         }
     }
 }
 
 impl EventHandler for State {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
+
         while ctx.time.check_update_time(60) {
+            self.redraw = true;
+
             let mut key_state = self.key_state.lock().unwrap();
 
             key_state.a = ctx.keyboard.is_key_pressed(KeyCode::Z);
@@ -174,6 +194,11 @@ impl EventHandler for State {
     }
 
     fn draw(&mut self, ctx: &mut Context) -> GameResult {
+        if !self.redraw {
+            return Ok(());
+        }
+
+        self.redraw = false;
         let mut canvas = graphics::Canvas::from_frame(ctx, Color::WHITE);
 
         let guard = self.screen_buffer.lock().unwrap();
@@ -181,6 +206,7 @@ impl EventHandler for State {
             .into_iter()
             .flat_map(|f| std::iter::repeat(f).take(3).chain(vec![255]))
             .collect::<Vec<_>>();
+        drop(guard);
         let image = Image::from_pixels(
             ctx,
             &image_pixels,
@@ -188,7 +214,6 @@ impl EventHandler for State {
             SCREEN_WIDTH,
             SCREEN_HEIGHT,
         );
-        drop(guard);
 
         let window_size = ctx.gfx.window().inner_size();
         let scale = if window_size.width as f32 / window_size.height as f32
@@ -202,6 +227,44 @@ impl EventHandler for State {
         let scale = Vector2::<f32> { x: scale, y: scale };
         canvas.set_sampler(Sampler::nearest_clamp());
         canvas.draw(&image, DrawParam::new().scale(scale));
+
         canvas.finish(ctx)
+
     }
+}
+
+fn setup_audio() -> (Stream, Arc<Mutex<VecDeque<i16>>>)
+{
+    let host = cpal::default_host();
+    let device = host.default_output_device().expect("no output device available");
+
+    let mut supported_configs_range = device.supported_output_configs()
+        .expect("error while querying configs");
+    let supported_config = supported_configs_range.next()
+        .expect("no supported config?!")
+        .with_sample_rate(SampleRate(44_100));
+    let sample_format = supported_config.sample_format();
+    let config = supported_config.into();
+
+    let audio_buffer = Arc::new(Mutex::new(VecDeque::<i16>::new()));
+    let audio_buffer_closure = audio_buffer.clone();
+
+    let err_fn = |err| eprintln!("an error occurred on the output audio stream: {}", err);
+    let write_buffer_fn = move |output_buffer: &mut [f32], _info: &cpal::OutputCallbackInfo| {
+        let mut input_buffer = audio_buffer_closure.lock().unwrap();
+        let out_len = input_buffer.len().min(output_buffer.len());
+
+        for (i, sample) in input_buffer.drain(..out_len).enumerate() {
+            output_buffer[i] = sample as f32 * 0.2
+        }
+    };
+
+    let stream = match sample_format {
+        SampleFormat::F32 => device.build_output_stream(&config, write_buffer_fn, err_fn, None),
+        sample_format => panic!("Unsupported sample format '{sample_format}'")
+    }.unwrap();
+
+    stream.play().unwrap();
+
+    (stream, audio_buffer)
 }
