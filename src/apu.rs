@@ -131,6 +131,7 @@ impl Apu {
                 (self.channel_square_one.duty & 0b11000000)
                     | (self.channel_square_one.length_timer & 0b00111111)
             }
+            0xff25 => self.channel_panning,
             0xff26 => self.channel_status.bits,
             register => panic!("Read from unknown audio register {:#04X}", register),
         }
@@ -295,11 +296,8 @@ impl ChannelSquare {
             if self.envelope_direction && self.volume < 15 {
                 self.volume += 1;
             } else if !self.envelope_direction && self.volume > 0 {
-                dbg!("min");
                 self.volume -= 1;
             }
-
-            dbg!(self.volume);
         }
     }
 }
