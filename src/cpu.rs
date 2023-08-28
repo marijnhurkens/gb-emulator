@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use bitvec::macros::internal::funty::Fundamental;
 use console::Term;
 use tracing::{event, Level};
+use crate::apu::SAMPLES_PER_FRAME;
 
 use crate::instructions::{
     decode, Add, Condition, ImmediateOperand, Instruction, InstructionCB, Load, MemoryLocation,
@@ -166,8 +167,9 @@ impl Cpu {
         }
 
         for _ in 0..t_cycles {
+            // Every audio frame we mix and dump the audio buffers.
             self.audio_step += 1;
-            if self.audio_step > ((2000.0 / 44_100.0) * CPU_FREQ as f32) as u32 {
+            if self.audio_step > ((SAMPLES_PER_FRAME as f32 / 44_100.0) * CPU_FREQ as f32) as u32 {
                 self.audio_step = 0;
                 self.mmu.apu.output();
             }

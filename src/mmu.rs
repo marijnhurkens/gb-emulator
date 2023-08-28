@@ -228,10 +228,7 @@ impl MMU {
             0xFF05 => self.tima,
             0xFF06 => self.tma,
             0xFF07 => self.tac.bits(),
-            0xFF10..=0xFF26 => {
-                event!(Level::WARN, "Audio register read, not implemented");
-                0
-            }
+            0xFF10..=0xFF26 => self.apu.read_register(pos),
             0xFF30..=0xFF3F => {
                 event!(Level::WARN, "Audio wave read, not implemented");
                 0
@@ -272,7 +269,7 @@ impl MMU {
             0xFF05 => self.tima = byte,
             0xFF06 => self.tma = byte,
             0xFF07 => self.tac = TimerControl::from_bits(byte).unwrap(),
-            0xFF10..=0xFF26 => event!(Level::WARN, "Audio register write, not implemented"),
+            0xFF10..=0xFF26 => self.apu.write_register(pos, byte),
             0xFF30..=0xFF3F => event!(Level::WARN, "Audio wave write, not implemented"),
             0xFF40 => self.video.lcd_control = LcdControl::from_bits(byte).unwrap(),
             0xFF41 => self.video.lcd_status = LcdStatus::from_bits(byte & 0x78).unwrap(),

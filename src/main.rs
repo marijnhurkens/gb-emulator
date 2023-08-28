@@ -262,7 +262,7 @@ fn setup_audio() -> (Stream, Arc<Mutex<VecDeque<i16>>>) {
         let out_len = input_buffer.len().min(output_buffer.len());
 
         for (i, sample) in input_buffer.drain(..out_len).enumerate() {
-            output_buffer[i] = sample as f32 * 0.2
+            output_buffer[i] = sample as f32 / 15.0
         }
     };
 

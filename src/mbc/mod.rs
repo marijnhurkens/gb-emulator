@@ -24,7 +24,7 @@ pub fn from_cartridge(cartridge: Cartridge) -> Box<dyn Mbc> {
 
     match cartridge.header.cartridge_type {
         0x00 => Box::new(Mbc0::new(cartridge.data)),
-        0x01 | 0x02 | 0x03 => Box::new(Mbc1::new(cartridge.data, cartridge.header.rom_size)),
+        0x01..=0x03 => Box::new(Mbc1::new(cartridge.data, cartridge.header.rom_size)),
         _ => panic!(
             "Unknown cartridge type {:#04X}",
             cartridge.header.cartridge_type
