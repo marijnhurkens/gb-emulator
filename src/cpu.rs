@@ -3,10 +3,10 @@ use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
+use crate::apu::SAMPLES_PER_FRAME;
 use bitvec::macros::internal::funty::Fundamental;
 use console::Term;
 use tracing::{event, Level};
-use crate::apu::SAMPLES_PER_FRAME;
 
 use crate::instructions::{
     decode, Add, Condition, ImmediateOperand, Instruction, InstructionCB, Load, MemoryLocation,

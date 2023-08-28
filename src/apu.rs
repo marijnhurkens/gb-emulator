@@ -90,7 +90,7 @@ impl Apu {
             0xff16 => {
                 self.channel_square_two.duty = (value & 0b11000000) >> 6;
                 self.channel_square_two.length_timer = value & 0b00111111;
-            },
+            }
             0xff17 => {
                 self.channel_square_two.envelope_pace = value & 0b00000111;
                 self.channel_square_two.envelope_direction = ((value & 0b00001000) >> 3).as_bool();
@@ -220,8 +220,7 @@ impl ChannelSquare {
             let time_next = self.time + (self.timer.period_length() * 4);
 
             while self.time < time_next {
-                let goal_amp = WAVE_PATTERN[self.duty as usize][self.phase]
-                    * self.volume as i32;
+                let goal_amp = WAVE_PATTERN[self.duty as usize][self.phase] * self.volume as i32;
                 if self.amplitude != goal_amp {
                     let delta = goal_amp - self.amplitude;
                     self.blip_buf.add_delta(self.time, delta);
@@ -275,8 +274,7 @@ impl ChannelSquare {
         (samples_available.min(SAMPLES_PER_FRAME + 100), buffer)
     }
 
-    pub fn trigger(&mut self)
-    {
+    pub fn trigger(&mut self) {
         self.enabled = true;
         self.volume = self.envelope_initial;
         self.envelope_div = 0;
@@ -364,7 +362,7 @@ impl FrameSequencer {
     }
 }
 
-#[derive(Debug,Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 enum FrameSequencerClock {
     Volume,
     Length,
