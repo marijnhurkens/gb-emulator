@@ -965,6 +965,7 @@ dependencies = [
  "ggez",
  "rand",
  "rodio",
+ "spin_sleep",
  "tracing",
  "tracing-subscriber",
 ]
@@ -2451,6 +2452,16 @@ dependencies = [
  "wayland-client",
  "wayland-cursor",
  "wayland-protocols",
+]
+
+[[package]]
+name = "spin_sleep"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cafa7900db085f4354dbc7025e25d7a839a14360ea13b5fc4fd717f2d3b23134"
+dependencies = [
+ "once_cell",
+ "winapi",
 ]
 
 [[package]]

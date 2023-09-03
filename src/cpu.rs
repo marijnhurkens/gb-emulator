@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use crate::apu::SAMPLES_PER_FRAME;
+use crate::apu::STEPS_PER_FRAME;
 use bitvec::macros::internal::funty::Fundamental;
 use console::Term;
 use tracing::{event, Level};
@@ -16,6 +16,7 @@ use crate::mmu::{InterruptFlags, MMU};
 use crate::ScreenBuffer;
 
 pub const CPU_FREQ: u32 = 4_194_304;
+const NANO_SECONDS_PER_CYCLE: f64 = 1_000_000_000.0 / CPU_FREQ as f64;
 const STACK_START: u16 = 0xfffe;
 
 #[derive(Debug)]
@@ -68,7 +69,9 @@ pub struct Cpu {
     current_opcode: Option<u8>,
     current_instruction: Option<Instruction>,
     frame_start: Instant,
+    frame_correction: Duration,
     audio_step: u32,
+    cycle_step: u32,
 }
 
 impl Cpu {
@@ -96,7 +99,9 @@ impl Cpu {
             current_opcode: None,
             current_instruction: None,
             frame_start: Instant::now(),
+            frame_correction: Duration::default(),
             audio_step: 0,
+            cycle_step: 0,
         }
     }
 
@@ -167,9 +172,10 @@ impl Cpu {
         }
 
         for _ in 0..t_cycles {
+            self.cycle_step += 1;
             // Every audio frame we mix and dump the audio buffers.
             self.audio_step += 1;
-            if self.audio_step > ((SAMPLES_PER_FRAME as f32 / 44_100.0) * CPU_FREQ as f32) as u32 {
+            if self.audio_step > STEPS_PER_FRAME {
                 self.audio_step = 0;
                 self.mmu.apu.output();
             }
@@ -213,13 +219,13 @@ impl Cpu {
                 self.pc = address;
 
                 // handle timing
-                let expected_time = Duration::from_secs_f64(1.0 / 59.73);
-                let end_time = Instant::now();
-                let time_elapsed = end_time.duration_since(self.frame_start);
+                let expected_time = Duration::from_nanos((self.cycle_step as f64 * NANO_SECONDS_PER_CYCLE) as u64);
+                self.cycle_step = 0;
+                let time_elapsed = self.frame_start.elapsed();
 
                 if time_elapsed.lt(&expected_time) {
                     let sleep_for = expected_time.sub(time_elapsed);
-                    sleep(sleep_for);
+                    spin_sleep::sleep(sleep_for);
                 }
 
                 self.frame_start = Instant::now();

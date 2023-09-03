@@ -5,25 +5,25 @@ extern crate core;
 use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::fs::File;
-use std::io::{stdout, Read};
+use std::io::{Read, stdout};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use crate::apu::Apu;
 use clap::{arg, Parser};
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, SampleRate, Stream};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use ggez::{Context, ContextBuilder, event, GameResult, graphics};
 use ggez::conf::{WindowMode, WindowSetup};
 use ggez::event::EventHandler;
 use ggez::graphics::{Color, DrawParam, Image, ImageFormat, Sampler};
 use ggez::input::keyboard::KeyCode;
 use ggez::mint::Vector2;
-use ggez::{event, graphics, Context, ContextBuilder, GameResult};
 use tracing::Level;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::Registry;
 
+use crate::apu::Apu;
 use crate::cartridge::Cartridge;
 use crate::cpu::Cpu;
 use crate::mmu::MMU;
@@ -261,8 +261,12 @@ fn setup_audio() -> (Stream, Arc<Mutex<VecDeque<i16>>>) {
         let mut input_buffer = audio_buffer_closure.lock().unwrap();
         let out_len = input_buffer.len().min(output_buffer.len());
 
+        if input_buffer.len() == 0 {
+            dbg!("Buffer under run");
+        }
+
         for (i, sample) in input_buffer.drain(..out_len).enumerate() {
-            output_buffer[i] = sample as f32 / 15.0
+            output_buffer[i] = sample as f32 / 25.0
         }
     };
 

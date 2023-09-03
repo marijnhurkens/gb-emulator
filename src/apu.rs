@@ -8,7 +8,8 @@ use blip_buf::BlipBuf;
 const CLOCK_RATE: u32 = 4_194_304;
 const SAMPLE_RATE: u32 = 44_100;
 const FRAME_SEQUENCER_PERIOD: u32 = CLOCK_RATE / 512;
-pub const SAMPLES_PER_FRAME: usize = 2000;
+const SAMPLES_PER_FRAME: usize = 2000;
+pub const STEPS_PER_FRAME: u32 = ((SAMPLES_PER_FRAME as f32 / SAMPLE_RATE as f32) * CLOCK_RATE as f32) as u32;
 const WAVE_PATTERN: [[i32; 8]; 4] = [
     [-1, -1, -1, -1, 1, -1, -1, -1],
     [-1, -1, -1, -1, 1, 1, -1, -1],
@@ -17,7 +18,7 @@ const WAVE_PATTERN: [[i32; 8]; 4] = [
 ];
 
 pub struct Apu {
-    audio_buffer: Arc<Mutex<VecDeque<i16>>>,
+    pub audio_buffer: Arc<Mutex<VecDeque<i16>>>,
     channel_status: ChannelStatus,
     master_volume: MasterVolume,
     channel_panning: u8,
@@ -144,7 +145,7 @@ impl Apu {
     fn mix_buffers(&mut self) {
         let (channel_1_count, channel_1_buffer) = self.channel_square_one.mix_buffer();
         let (channel_2_count, channel_2_buffer) = self.channel_square_two.mix_buffer();
-        //assert_eq!(channel_1_count, channel_2_count);
+        assert_eq!(channel_1_count, channel_2_count);
 
         let mut buffer_lock = self.audio_buffer.lock().unwrap();
         for i in 0..channel_1_count.min(channel_2_count) {
@@ -177,7 +178,7 @@ struct ChannelSquare {
 impl ChannelSquare {
     pub fn new() -> ChannelSquare {
         let mut blip = BlipBuf::new(SAMPLES_PER_FRAME as u32 * 2 + 100);
-        blip.set_rates(CLOCK_RATE as f64, 44_100.0);
+        blip.set_rates(CLOCK_RATE as f64, SAMPLE_RATE as f64);
 
         ChannelSquare {
             enabled: false,
@@ -202,10 +203,6 @@ impl ChannelSquare {
     }
 
     pub fn step(&mut self) {
-        if !self.enabled {
-            return;
-        }
-
         self.timer_div += 1;
 
         // The period divider is clocked at once per 4 dots (cycles)
@@ -220,7 +217,12 @@ impl ChannelSquare {
             let time_next = self.time + (self.timer.period_length() * 4);
 
             while self.time < time_next {
-                let goal_amp = WAVE_PATTERN[self.duty as usize][self.phase] * self.volume as i32;
+                let goal_amp = if self.enabled {
+                    WAVE_PATTERN[self.duty as usize][self.phase] * self.volume as i32
+                } else {
+                    0
+                };
+
                 if self.amplitude != goal_amp {
                     let delta = goal_amp - self.amplitude;
                     self.blip_buf.add_delta(self.time, delta);
@@ -230,6 +232,10 @@ impl ChannelSquare {
             }
 
             self.phase = (self.phase + 1) % 8;
+        }
+
+        if !self.enabled {
+            return;
         }
 
         self.frame_sequencer_div += 1;
@@ -261,15 +267,14 @@ impl ChannelSquare {
     }
 
     pub fn mix_buffer(&mut self) -> (usize, [i16; SAMPLES_PER_FRAME + 100]) {
-        self.blip_buf.end_frame(self.time);
+        self.blip_buf.add_delta(self.time, -self.amplitude);
+        self.amplitude = 0;
+        self.blip_buf.end_frame(STEPS_PER_FRAME);
         let samples_available = self.blip_buf.samples_avail() as usize;
         let mut buffer = [0; SAMPLES_PER_FRAME + 100];
         self.blip_buf.read_samples(&mut buffer, false);
 
-        if samples_available > SAMPLES_PER_FRAME + 100 {
-            dbg!("!", samples_available);
-        }
-        self.time = 0;
+        self.time = self.time.saturating_sub(STEPS_PER_FRAME);
 
         (samples_available.min(SAMPLES_PER_FRAME + 100), buffer)
     }
@@ -278,7 +283,6 @@ impl ChannelSquare {
         self.enabled = true;
         self.volume = self.envelope_initial;
         self.envelope_div = 0;
-        //self.timer.period_div = self.timer.period;
     }
 
     fn step_envelope(&mut self) {
@@ -317,7 +321,7 @@ impl Timer {
     pub fn step(&mut self) -> bool {
         self.period_div += 1;
 
-        if self.period_div == 0x800 {
+        if self.period_div >= 0x800 {
             self.period_div = self.period;
             return true;
         }
