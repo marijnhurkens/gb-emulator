@@ -1,9 +1,5 @@
-use std::ops::Sub;
 use std::sync::{Arc, Mutex};
-use std::thread::sleep;
-use std::time::{Duration, Instant};
 
-use crate::apu::STEPS_PER_FRAME;
 use bitvec::macros::internal::funty::Fundamental;
 use console::Term;
 use tracing::{event, Level};
@@ -68,10 +64,6 @@ pub struct Cpu {
     break_point: Option<u16>,
     current_opcode: Option<u8>,
     current_instruction: Option<Instruction>,
-    frame_start: Instant,
-    frame_correction: Duration,
-    audio_step: u32,
-    cycle_step: u32,
 }
 
 impl Cpu {
@@ -98,10 +90,6 @@ impl Cpu {
             break_point: None,
             current_opcode: None,
             current_instruction: None,
-            frame_start: Instant::now(),
-            frame_correction: Duration::default(),
-            audio_step: 0,
-            cycle_step: 0,
         }
     }
 
@@ -172,14 +160,6 @@ impl Cpu {
         }
 
         for _ in 0..t_cycles {
-            self.cycle_step += 1;
-            // Every audio frame we mix and dump the audio buffers.
-            self.audio_step += 1;
-            if self.audio_step > STEPS_PER_FRAME {
-                self.audio_step = 0;
-                self.mmu.apu.output();
-            }
-
             self.mmu.step();
             self.mmu.apu.step();
         }
@@ -217,18 +197,6 @@ impl Cpu {
                 let address = 0x0040;
                 event!(Level::INFO, "INT 40 VBLANK | {:#08X}", address);
                 self.pc = address;
-
-                // handle timing
-                let expected_time = Duration::from_nanos((self.cycle_step as f64 * NANO_SECONDS_PER_CYCLE) as u64);
-                self.cycle_step = 0;
-                let time_elapsed = self.frame_start.elapsed();
-
-                if time_elapsed.lt(&expected_time) {
-                    let sleep_for = expected_time.sub(time_elapsed);
-                    spin_sleep::sleep(sleep_for);
-                }
-
-                self.frame_start = Instant::now();
 
                 return 4;
             }

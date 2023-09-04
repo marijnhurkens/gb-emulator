@@ -1,23 +1,23 @@
-#![allow(dead_code, clippy::upper_case_acronyms)]
+#![allow(dead_code, clippy::upper_case_acronyms, clippy::bad_bit_mask)]
 
 extern crate core;
 
 use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::fs::File;
-use std::io::{Read, stdout};
+use std::io::{stdout, Read};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 use clap::{arg, Parser};
-use cpal::{SampleFormat, SampleRate, Stream};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use ggez::{Context, ContextBuilder, event, GameResult, graphics};
+use cpal::{SampleFormat, SampleRate, Stream};
 use ggez::conf::{WindowMode, WindowSetup};
 use ggez::event::EventHandler;
 use ggez::graphics::{Color, DrawParam, Image, ImageFormat, Sampler};
 use ggez::input::keyboard::KeyCode;
 use ggez::mint::Vector2;
+use ggez::{event, graphics, Context, ContextBuilder, GameResult};
 use tracing::Level;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use tracing_subscriber::prelude::*;

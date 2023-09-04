@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use bitflags::bitflags;
 use bitvec::macros::internal::funty::Fundamental;
@@ -8,8 +9,9 @@ use blip_buf::BlipBuf;
 const CLOCK_RATE: u32 = 4_194_304;
 const SAMPLE_RATE: u32 = 44_100;
 const FRAME_SEQUENCER_PERIOD: u32 = CLOCK_RATE / 512;
-const SAMPLES_PER_FRAME: usize = 2000;
-pub const STEPS_PER_FRAME: u32 = ((SAMPLES_PER_FRAME as f32 / SAMPLE_RATE as f32) * CLOCK_RATE as f32) as u32;
+const SAMPLES_PER_FRAME: usize = 500;
+const STEPS_PER_FRAME: u32 =
+    ((SAMPLES_PER_FRAME as f32 / SAMPLE_RATE as f32) * CLOCK_RATE as f32) as u32;
 const WAVE_PATTERN: [[i32; 8]; 4] = [
     [-1, -1, -1, -1, 1, -1, -1, -1],
     [-1, -1, -1, -1, 1, 1, -1, -1],
@@ -24,6 +26,7 @@ pub struct Apu {
     channel_panning: u8,
     channel_square_one: ChannelSquare,
     channel_square_two: ChannelSquare,
+    time: u32,
 }
 
 impl Apu {
@@ -38,6 +41,7 @@ impl Apu {
             channel_panning: 0,
             channel_square_one: ChannelSquare::new(),
             channel_square_two: ChannelSquare::new(),
+            time: 0,
         }
     }
 
@@ -52,12 +56,23 @@ impl Apu {
             channel_panning: 0,
             channel_square_one: ChannelSquare::new(),
             channel_square_two: ChannelSquare::new(),
+            time: 0,
         }
     }
 
     pub fn step(&mut self) {
-        self.channel_square_one.step();
-        self.channel_square_two.step();
+        self.time += 1;
+
+        if self.time > STEPS_PER_FRAME {
+            self.sleep_check();
+
+            self.channel_square_one.run(STEPS_PER_FRAME);
+            self.channel_square_two.run(STEPS_PER_FRAME);
+
+            self.time = 0;
+
+            self.mix_buffers();
+        }
     }
 
     pub fn write_register(&mut self, reg: u16, value: u8) {
@@ -138,10 +153,6 @@ impl Apu {
         }
     }
 
-    pub fn output(&mut self) {
-        self.mix_buffers();
-    }
-
     fn mix_buffers(&mut self) {
         let (channel_1_count, channel_1_buffer) = self.channel_square_one.mix_buffer();
         let (channel_2_count, channel_2_buffer) = self.channel_square_two.mix_buffer();
@@ -153,11 +164,16 @@ impl Apu {
             buffer_lock.push_back(channel_2_buffer[i]);
         }
     }
+
+    fn sleep_check(&self) {
+        while self.audio_buffer.lock().unwrap().len() > SAMPLES_PER_FRAME * 2 {
+            spin_sleep::sleep(Duration::from_millis(4));
+        }
+    }
 }
 
 struct ChannelSquare {
     enabled: bool,
-    time: u32,
     timer_div: u8,
     timer: Timer,
     frame_sequencer: FrameSequencer,
@@ -182,8 +198,6 @@ impl ChannelSquare {
 
         ChannelSquare {
             enabled: false,
-            // clock time for the blip buffer
-            time: 0,
             timer_div: 0,
             timer: Timer::new(),
             frame_sequencer: FrameSequencer::new(),
@@ -202,49 +216,39 @@ impl ChannelSquare {
         }
     }
 
-    pub fn step(&mut self) {
-        self.timer_div += 1;
+    /// Run the audio for $cycles, this means that changes in the audio registers during these
+    /// cycles aren't reflected.
+    pub fn run(&mut self, cycles: u32) {
+        for i in 0..cycles {
+            self.timer_div += 1;
 
-        // The period divider is clocked at once per 4 dots (cycles)
-        let timer_clocked = if self.timer_div == 4 {
-            self.timer_div = 0;
-            self.timer.step()
-        } else {
-            false
-        };
+            // The period divider is clocked at once per 4 dots (cycles)
+            let timer_clocked = if self.timer_div == 4 {
+                self.timer_div = 0;
+                self.timer.step()
+            } else {
+                false
+            };
 
-        if timer_clocked {
-            let time_next = self.time + (self.timer.period_length() * 4);
-
-            while self.time < time_next {
-                let goal_amp = if self.enabled {
-                    WAVE_PATTERN[self.duty as usize][self.phase] * self.volume as i32
-                } else {
-                    0
-                };
-
-                if self.amplitude != goal_amp {
-                    let delta = goal_amp - self.amplitude;
-                    self.blip_buf.add_delta(self.time, delta);
-                    self.amplitude += delta;
-                }
-                self.time += 1;
+            // always write a sample if the timer has clocked, write amplitude 0 when disabled.
+            if timer_clocked {
+                self.write_sample(i);
             }
 
-            self.phase = (self.phase + 1) % 8;
-        }
+            if !self.enabled {
+                return;
+            }
 
-        if !self.enabled {
-            return;
-        }
+            self.frame_sequencer_div += 1;
 
-        self.frame_sequencer_div += 1;
+            let frame_sequencer_clocked = if self.frame_sequencer_div == FRAME_SEQUENCER_PERIOD {
+                self.frame_sequencer_div = 0;
+                self.frame_sequencer.step()
+            } else {
+                None
+            };
 
-        if self.frame_sequencer_div == FRAME_SEQUENCER_PERIOD {
-            self.frame_sequencer_div = 0;
-            let frame_sequencer_clock = self.frame_sequencer.step();
-
-            match frame_sequencer_clock {
+            match frame_sequencer_clocked {
                 None => {}
                 Some(FrameSequencerClock::Length) => {
                     if self.length_timer_enabled {
@@ -258,23 +262,19 @@ impl ChannelSquare {
                 }
                 Some(FrameSequencerClock::Volume) => self.step_envelope(),
             }
-        }
 
-        if self.length_timer == 64 {
-            self.enabled = false;
-            self.length_timer = 0;
+            if self.length_timer == 64 {
+                self.enabled = false;
+                self.length_timer = 0;
+            }
         }
     }
 
     pub fn mix_buffer(&mut self) -> (usize, [i16; SAMPLES_PER_FRAME + 100]) {
-        self.blip_buf.add_delta(self.time, -self.amplitude);
-        self.amplitude = 0;
         self.blip_buf.end_frame(STEPS_PER_FRAME);
         let samples_available = self.blip_buf.samples_avail() as usize;
         let mut buffer = [0; SAMPLES_PER_FRAME + 100];
         self.blip_buf.read_samples(&mut buffer, false);
-
-        self.time = self.time.saturating_sub(STEPS_PER_FRAME);
 
         (samples_available.min(SAMPLES_PER_FRAME + 100), buffer)
     }
@@ -283,6 +283,22 @@ impl ChannelSquare {
         self.enabled = true;
         self.volume = self.envelope_initial;
         self.envelope_div = 0;
+    }
+
+    fn write_sample(&mut self, time: u32) {
+        let goal_amp = if self.enabled {
+            WAVE_PATTERN[self.duty as usize][self.phase] * self.volume as i32
+        } else {
+            0
+        };
+
+        if self.amplitude != goal_amp {
+            let delta = goal_amp - self.amplitude;
+            self.blip_buf.add_delta(time, delta);
+            self.amplitude += delta;
+        }
+
+        self.phase = (self.phase + 1) % 8;
     }
 
     fn step_envelope(&mut self) {
