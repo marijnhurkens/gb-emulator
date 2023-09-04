@@ -35,7 +35,7 @@ mod helpers;
 mod instructions;
 mod mbc;
 mod mmu;
-mod video;
+mod ppu;
 
 const SCREEN_WIDTH: u32 = 160;
 const SCREEN_HEIGHT: u32 = 144;

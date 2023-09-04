@@ -20,7 +20,7 @@ const TILE_MAP_2_START: u16 = 0x9C00;
 const TILE_MAP_2_END: u16 = 0x9FFF;
 
 #[derive(Debug)]
-pub struct Video {
+pub struct Ppu {
     mode_step: usize,
     pub vram: Cursor<Vec<u8>>,
     pub oam: Cursor<Vec<u8>>,
@@ -100,7 +100,7 @@ impl LcdStatus {
     }
 }
 
-impl Video {
+impl Ppu {
     pub fn new() -> Self {
         Self {
             mode: VideoMode::OamRead,

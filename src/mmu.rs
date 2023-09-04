@@ -9,7 +9,7 @@ use tracing::{event, Level};
 use crate::apu::Apu;
 use crate::cpu::CPU_FREQ;
 use crate::mbc::Mbc;
-use crate::video::{LcdControl, LcdStatus, Video, VRAM_START};
+use crate::ppu::{LcdControl, LcdStatus, Ppu, VRAM_START};
 use crate::KeyState;
 
 const MEM_SIZE: usize = 1024 * 128;
@@ -41,7 +41,7 @@ bitflags! {
 pub struct MMU {
     mbc: Box<dyn Mbc>,
     storage: Cursor<Vec<u8>>,
-    pub video: Video,
+    pub video: Ppu,
     pub apu: Apu,
     pub interrupt_flags: InterruptFlags,
     pub interrupt_enable: InterruptFlags,
@@ -63,7 +63,7 @@ impl MMU {
     pub fn new(mbc: Box<dyn Mbc>, apu: Apu, key_state: Arc<Mutex<KeyState>>) -> Self {
         Self {
             mbc,
-            video: Video::new(),
+            video: Ppu::new(),
             apu,
             key_state,
             storage: Cursor::new(vec![0x0; MEM_SIZE]),
