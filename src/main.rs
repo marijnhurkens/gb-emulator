@@ -26,7 +26,7 @@ use tracing_subscriber::Registry;
 use crate::apu::Apu;
 use crate::cartridge::Cartridge;
 use crate::cpu::Cpu;
-use crate::mmu::MMU;
+use crate::mmu::Mmu;
 
 mod apu;
 mod cartridge;
@@ -127,7 +127,7 @@ fn main() {
 
     let mbc = mbc::from_cartridge(cartridge);
     let apu = Apu::new_with_buffer(audio_buffer_apu);
-    let mmu = MMU::new(mbc, apu, key_state.clone());
+    let mmu = Mmu::new(mbc, apu, key_state.clone());
     let mut cpu = Cpu::new(mmu);
 
     let break_point = args

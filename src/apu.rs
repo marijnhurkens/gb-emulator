@@ -60,6 +60,8 @@ impl Apu {
         }
     }
 
+    /// This function runs the audio channels, while also syncing the system to the audio buffer.
+    /// This is easier than syncing the PPU to 59.7 fps while producing the samples we need.
     pub fn step(&mut self) {
         self.time += 1;
 
@@ -166,8 +168,11 @@ impl Apu {
     }
 
     fn sleep_check(&self) {
-        while self.audio_buffer.lock().unwrap().len() > SAMPLES_PER_FRAME * 2 {
-            spin_sleep::sleep(Duration::from_millis(4));
+        // Samples are produces per batch of SAMPLES_PER_FRAME, lets try to keep a buffer of
+        // 2 * SAMPLES_PER_FRAME, for 2 channels of audio. If we have this buffer available
+        // we should be able to sleep for SAMPLES_PER_FRAME / SAMPLE_RATE seconds.
+        while self.audio_buffer.lock().unwrap().len() > SAMPLES_PER_FRAME * 2 * 2 {
+            spin_sleep::sleep(Duration::from_secs_f64(SAMPLES_PER_FRAME as f64 / SAMPLE_RATE as f64));
         }
     }
 }

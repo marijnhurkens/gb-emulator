@@ -477,26 +477,25 @@ impl Ppu {
         let mut data = [0; 16];
         self.vram.read_exact(&mut data).unwrap();
 
-        let pixels: Tile = data
-            .chunks(2)
-            .flat_map(|chunk| {
-                let mut pixels: [u8; 8] = [0; 8];
-                for (i, pixel) in pixels.iter_mut().enumerate() {
-                    // get the nth bit from both bytes
-                    let least = (chunk[0] >> (7 - i)) & 0x1;
-                    let most = (chunk[1] >> (7 - i)) & 0x1;
+        let mut tile: Tile = [0; 64];
 
-                    // combine, first bit is the least significant bit and the second the most significant
-                    *pixel = least + (most << 1);
-                }
+        for (chunk_index, chunk) in data.chunks(2).enumerate() {
+            let mut pixels: [u8; 8] = [0; 8];
+            for (i, pixel) in pixels.iter_mut().enumerate() {
+                // get the nth bit from both bytes
+                let least = (chunk[0] >> (7 - i)) & 0x1;
+                let most = (chunk[1] >> (7 - i)) & 0x1;
 
-                pixels
-            })
-            .collect::<Vec<u8>>()
-            .try_into()
-            .unwrap();
+                // combine, first bit is the least significant bit and the second the most significant
+                *pixel = least + (most << 1);
+            }
 
-        pixels
+            for (i, pixel) in pixels.iter().enumerate() {
+                tile[chunk_index * 8 + i] = *pixel
+            }
+        }
+
+        tile
     }
 
     fn index_to_color(&self, index: u8, palette: Palette) -> u8 {

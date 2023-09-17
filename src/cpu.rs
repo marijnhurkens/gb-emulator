@@ -8,7 +8,7 @@ use crate::instructions::{
     decode, Add, Condition, ImmediateOperand, Instruction, InstructionCB, Load, MemoryLocation,
     Operand, Register, RegisterPair,
 };
-use crate::mmu::{InterruptFlags, MMU};
+use crate::mmu::{InterruptFlags, Mmu};
 use crate::ScreenBuffer;
 
 pub const CPU_FREQ: u32 = 4_194_304;
@@ -59,7 +59,7 @@ pub struct Cpu {
     l: u8,
     flags: CpuFlags,
     interrupts_enabled: bool,
-    mmu: MMU,
+    mmu: Mmu,
     state: CpuState,
     break_point: Option<u16>,
     current_opcode: Option<u8>,
@@ -67,7 +67,7 @@ pub struct Cpu {
 }
 
 impl Cpu {
-    pub fn new(mmu: MMU) -> Self {
+    pub fn new(mmu: Mmu) -> Self {
         Cpu {
             pc: 0x0100,
             sp: STACK_START,
@@ -101,7 +101,7 @@ impl Cpu {
         self.break_point = break_point;
         self.state = CpuState::Running;
 
-        self.log_doctor();
+        //self.log_doctor();
 
         loop {
             self.cycle(&screen_buffer);
@@ -129,20 +129,12 @@ impl Cpu {
             let (instruction, length) = decode(&mut self.mmu, self.pc);
             self.current_instruction = Some(instruction);
 
-            event!(
-                Level::DEBUG,
-                "{:#08X} | {:#04X} | {}",
-                self.pc,
-                self.mmu.read_byte(self.pc),
-                instruction
-            );
-
             self.pc = self.pc.wrapping_add(length);
 
             self.process_instruction(instruction) * 4
         };
 
-        self.log_doctor();
+        //self.log_doctor();
 
         if self.state == CpuState::Stopped {
             let term = Term::stdout();
@@ -1721,7 +1713,7 @@ mod tests {
     use crate::apu::Apu;
     use crate::cartridge::CartridgeHeader;
     use crate::cpu::{CpuState, STACK_START};
-    use crate::mmu::MMU;
+    use crate::mmu::Mmu;
     use crate::{mbc, Cartridge, Cpu, KeyState};
 
     #[test]
@@ -1734,7 +1726,7 @@ mod tests {
             data: vec![0xCD, 0x03, 0x00],
         };
 
-        let memory = MMU::new(
+        let memory = Mmu::new(
             mbc::from_cartridge(cartridge),
             Apu::new(),
             Arc::new(Mutex::new(KeyState::default())),
@@ -1759,7 +1751,7 @@ mod tests {
             data: vec![0xCD, 0x04, 0x00, 0x00, 0xC9],
         };
 
-        let memory = MMU::new(
+        let memory = Mmu::new(
             mbc::from_cartridge(cartridge),
             Apu::new(),
             Arc::new(Mutex::new(KeyState::default())),

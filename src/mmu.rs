@@ -38,7 +38,7 @@ bitflags! {
     }
 }
 
-pub struct MMU {
+pub struct Mmu {
     mbc: Box<dyn Mbc>,
     storage: Cursor<Vec<u8>>,
     pub video: Ppu,
@@ -59,7 +59,7 @@ pub struct MMU {
     key_state: Arc<Mutex<KeyState>>,
 }
 
-impl MMU {
+impl Mmu {
     pub fn new(mbc: Box<dyn Mbc>, apu: Apu, key_state: Arc<Mutex<KeyState>>) -> Self {
         Self {
             mbc,
@@ -107,7 +107,7 @@ impl MMU {
             }
             0xFFFF => self.interrupt_enable.bits,
             _ => {
-                event!(Level::ERROR, "Memory map not implemented for {:#04X}", pos);
+                //event!(Level::ERROR, "Memory map not implemented for {:#04X}", pos);
                 0xFF
             }
         }
@@ -119,12 +119,6 @@ impl MMU {
     }
 
     pub fn write_byte(&mut self, pos: u16, byte: u8) {
-        event!(
-            Level::DEBUG,
-            "memory write byte {:#04X} at {:#06X}",
-            byte,
-            pos
-        );
         match pos {
             0x0000..=0x7FFF => self.mbc.write_rom(pos, byte),
             VRAM_START..=0x9FFF => self.video.write_byte(pos, byte),
@@ -217,11 +211,11 @@ impl MMU {
                 self.read_key_state().0
             }
             0xFF01 => {
-                event!(Level::WARN, "SB read, not implemented");
+                //event!(Level::WARN, "SB read, not implemented");
                 0
             } // serial transfer not implemented
             0xFF02 => {
-                event!(Level::WARN, "SC read, not implemented");
+                //event!(Level::WARN, "SC read, not implemented");
                 0
             } // serial control not implemented
             0xFF04 => self.div,
@@ -230,7 +224,7 @@ impl MMU {
             0xFF07 => self.tac.bits(),
             0xFF10..=0xFF26 => self.apu.read_register(pos),
             0xFF30..=0xFF3F => {
-                event!(Level::WARN, "Audio wave read, not implemented");
+                //event!(Level::WARN, "Audio wave read, not implemented");
                 0
             }
             0xFF40 => self.video.lcd_control.bits(),
@@ -249,7 +243,7 @@ impl MMU {
                 0xFF
             }
             0xFF6A | 0xFF6B => {
-                event!(Level::WARN, "CGB only not supported");
+                //event!(Level::WARN, "CGB only not supported");
                 0
             }
             _ => {
@@ -270,7 +264,7 @@ impl MMU {
             0xFF06 => self.tma = byte,
             0xFF07 => self.tac = TimerControl::from_bits(byte).unwrap(),
             0xFF10..=0xFF26 => self.apu.write_register(pos, byte),
-            0xFF30..=0xFF3F => event!(Level::WARN, "Audio wave write, not implemented"),
+            0xFF30..=0xFF3F => (), //event!(Level::WARN, "Audio wave write, not implemented"),
             0xFF40 => self.video.lcd_control = LcdControl::from_bits(byte).unwrap(),
             0xFF41 => self.video.lcd_status = LcdStatus::from_bits(byte & 0x78).unwrap(),
             0xFF42 => self.video.scy = byte,
@@ -282,13 +276,10 @@ impl MMU {
             0xFF49 => self.video.obj_1_palette = byte,
             0xFF4A => self.video.window_y = byte,
             0xFF4B => self.video.window_x = byte,
-            0xFF4D => event!(
-                Level::WARN,
-                "KEY1 prepare speed switch (CGB only) not supported"
-            ),
+            0xFF4D => (), //event!(Level::WARN,"KEY1 prepare speed switch (CGB only) not supported"),
             0xFF4F => self.video.bank_select = byte,
-            0xFF50 => event!(Level::WARN, "Disable boot rom, not implemented"),
-            0xFF6A | 0xFF6B => event!(Level::WARN, "CGB only not supported"),
+            0xFF50 => (),//event!(Level::WARN, "Disable boot rom, not implemented"),
+            0xFF6A | 0xFF6B => (),//event!(Level::WARN, "CGB only not supported"),
             _ => {
                 unimplemented!("IO register not implemented for {:#08X}", pos)
             }
@@ -322,6 +313,7 @@ impl MMU {
             self.div = self.div.wrapping_add(1);
         }
 
+        // todo: reverse this, we shouldn't lock on each cycle
         if self.read_key_state().1 {
             self.interrupt_flags |= InterruptFlags::JOYPAD;
         }
