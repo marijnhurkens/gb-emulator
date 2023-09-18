@@ -172,7 +172,9 @@ impl Apu {
         // 2 * SAMPLES_PER_FRAME, for 2 channels of audio. If we have this buffer available
         // we should be able to sleep for SAMPLES_PER_FRAME / SAMPLE_RATE seconds.
         while self.audio_buffer.lock().unwrap().len() > SAMPLES_PER_FRAME * 2 * 2 {
-            spin_sleep::sleep(Duration::from_secs_f64(SAMPLES_PER_FRAME as f64 / SAMPLE_RATE as f64));
+            spin_sleep::sleep(Duration::from_secs_f64(
+                SAMPLES_PER_FRAME as f64 / SAMPLE_RATE as f64,
+            ));
         }
     }
 }

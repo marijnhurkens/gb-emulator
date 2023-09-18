@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::{stdout, Read};
+use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -15,7 +16,7 @@ use cpal::{SampleFormat, SampleRate, Stream};
 use ggez::conf::{WindowMode, WindowSetup};
 use ggez::event::EventHandler;
 use ggez::graphics::{Color, DrawParam, Image, ImageFormat, Sampler};
-use ggez::input::keyboard::KeyCode;
+use ggez::input::keyboard::KeyboardContext;
 use ggez::mint::Vector2;
 use ggez::{event, graphics, Context, ContextBuilder, GameResult};
 use tracing::Level;
@@ -26,12 +27,14 @@ use tracing_subscriber::Registry;
 use crate::apu::Apu;
 use crate::cartridge::Cartridge;
 use crate::cpu::Cpu;
+use crate::input::{KeyMapping, KeyMessage, KeyPosition, KEY_MAP};
 use crate::mmu::Mmu;
 
 mod apu;
 mod cartridge;
 mod cpu;
 mod helpers;
+mod input;
 mod instructions;
 mod mbc;
 mod mmu;
@@ -57,21 +60,9 @@ struct Args {
     cpu_log: bool,
 }
 
-#[derive(Debug, Default)]
-pub struct KeyState {
-    up: bool,
-    down: bool,
-    left: bool,
-    right: bool,
-    start: bool,
-    select: bool,
-    a: bool,
-    b: bool,
-}
-
 struct State {
     screen_buffer: Arc<Mutex<ScreenBuffer>>,
-    key_state: Arc<Mutex<KeyState>>,
+    key_sender: Sender<KeyMessage>,
     redraw: bool,
     audio_buffer: Arc<Mutex<VecDeque<i16>>>,
     stream: Stream,
@@ -120,14 +111,15 @@ fn main() {
 
     let screen_buffer: Arc<Mutex<ScreenBuffer>> = Arc::new(Mutex::new([0; SCREEN_BUFFER_SIZE]));
     let cpu_screen_buffer = screen_buffer.clone();
-    let key_state = Arc::new(Mutex::new(KeyState::default()));
 
     let (audio_stream, audio_buffer) = setup_audio();
     let audio_buffer_apu = audio_buffer.clone();
 
+    let (key_sender, key_receiver) = channel::<KeyMessage>();
+
     let mbc = mbc::from_cartridge(cartridge);
     let apu = Apu::new_with_buffer(audio_buffer_apu);
-    let mmu = Mmu::new(mbc, apu, key_state.clone());
+    let mmu = Mmu::new(mbc, apu, key_receiver);
     let mut cpu = Cpu::new(mmu);
 
     let break_point = args
@@ -150,7 +142,7 @@ fn main() {
     let state = State::new(
         &mut ctx,
         screen_buffer,
-        key_state,
+        key_sender,
         audio_buffer,
         audio_stream,
     );
@@ -162,16 +154,36 @@ impl State {
     pub fn new(
         _ctx: &mut Context,
         screen_buffer: Arc<Mutex<ScreenBuffer>>,
-        key_state: Arc<Mutex<KeyState>>,
+        key_sender: Sender<KeyMessage>,
         audio_buffer: Arc<Mutex<VecDeque<i16>>>,
         stream: Stream,
     ) -> State {
         State {
             screen_buffer,
-            key_state,
+            key_sender,
             redraw: false,
             audio_buffer,
             stream,
+        }
+    }
+
+    fn check_and_send_key(&mut self, keyboard: &KeyboardContext, mapping: KeyMapping) {
+        if keyboard.is_key_just_pressed(mapping.0) {
+            self.key_sender
+                .send(KeyMessage {
+                    key: mapping.1,
+                    key_position: KeyPosition::Pressed,
+                })
+                .unwrap();
+        }
+
+        if keyboard.is_key_just_released(mapping.0) {
+            self.key_sender
+                .send(KeyMessage {
+                    key: mapping.1,
+                    key_position: KeyPosition::Released,
+                })
+                .unwrap();
         }
     }
 }
@@ -181,18 +193,9 @@ impl EventHandler for State {
         while ctx.time.check_update_time(60) {
             self.redraw = true;
 
-            let mut key_state = self.key_state.lock().unwrap();
-
-            key_state.a = ctx.keyboard.is_key_pressed(KeyCode::Z);
-            key_state.b = ctx.keyboard.is_key_pressed(KeyCode::X);
-
-            key_state.up = ctx.keyboard.is_key_pressed(KeyCode::Up);
-            key_state.down = ctx.keyboard.is_key_pressed(KeyCode::Down);
-            key_state.left = ctx.keyboard.is_key_pressed(KeyCode::Left);
-            key_state.right = ctx.keyboard.is_key_pressed(KeyCode::Right);
-
-            key_state.select = ctx.keyboard.is_key_pressed(KeyCode::Backslash);
-            key_state.start = ctx.keyboard.is_key_pressed(KeyCode::Return);
+            for key_mapping in KEY_MAP {
+                self.check_and_send_key(&ctx.keyboard, key_mapping);
+            }
         }
 
         Ok(())

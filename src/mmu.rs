@@ -1,5 +1,5 @@
 use std::io::{Cursor, Read};
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::Receiver;
 
 use bitflags::bitflags;
 use bitvec::macros::internal::funty::Fundamental;
@@ -8,9 +8,10 @@ use tracing::{event, Level};
 
 use crate::apu::Apu;
 use crate::cpu::CPU_FREQ;
+use crate::input::Key;
 use crate::mbc::Mbc;
 use crate::ppu::{LcdControl, LcdStatus, Ppu, VRAM_START};
-use crate::KeyState;
+use crate::{KeyMessage, KeyPosition};
 
 const MEM_SIZE: usize = 1024 * 128;
 const DIVIDER_REG_CYCLES_PER_STEP: u32 = (16_384 / CPU_FREQ) * CPU_FREQ;
@@ -38,6 +39,18 @@ bitflags! {
     }
 }
 
+#[derive(Debug, Default)]
+struct KeyState {
+    up: KeyPosition,
+    down: KeyPosition,
+    left: KeyPosition,
+    right: KeyPosition,
+    start: KeyPosition,
+    select: KeyPosition,
+    a: KeyPosition,
+    b: KeyPosition,
+}
+
 pub struct Mmu {
     mbc: Box<dyn Mbc>,
     storage: Cursor<Vec<u8>>,
@@ -56,16 +69,18 @@ pub struct Mmu {
     bcpd: u8,
     sb: u8,
     sc: SerialControl,
-    key_state: Arc<Mutex<KeyState>>,
+    key_state: KeyState,
+    key_receiver: Receiver<KeyMessage>,
 }
 
 impl Mmu {
-    pub fn new(mbc: Box<dyn Mbc>, apu: Apu, key_state: Arc<Mutex<KeyState>>) -> Self {
+    pub fn new(mbc: Box<dyn Mbc>, apu: Apu, key_receiver: Receiver<KeyMessage>) -> Self {
         Self {
             mbc,
             video: Ppu::new(),
             apu,
-            key_state,
+            key_state: KeyState::default(),
+            key_receiver,
             storage: Cursor::new(vec![0x0; MEM_SIZE]),
             interrupt_flags: InterruptFlags::VBLANK,
             interrupt_enable: InterruptFlags::empty(),
@@ -176,22 +191,35 @@ impl Mmu {
         self.write_byte(pos + 1, bytes[1]);
     }
 
+    fn update_key_state(&mut self) {
+        if let Ok(key_message) = self.key_receiver.try_recv() {
+            match key_message.key {
+                Key::Left => self.key_state.left = key_message.key_position,
+                Key::Right => self.key_state.right = key_message.key_position,
+                Key::Up => self.key_state.up = key_message.key_position,
+                Key::Down => self.key_state.down = key_message.key_position,
+                Key::A => self.key_state.a = key_message.key_position,
+                Key::B => self.key_state.b = key_message.key_position,
+                Key::Start => self.key_state.start = key_message.key_position,
+                Key::Select => self.key_state.select = key_message.key_position,
+            }
+        }
+    }
+
     /// Returns the key state and if it has changed
     fn read_key_state(&mut self) -> (u8, bool) {
-        let key_state = self.key_state.lock().unwrap();
-
         let new_state = if self.buttons & 0x20 == 0x0 {
             (self.buttons & 0xf0)
-                | ((!key_state.start as u8) << 3)
-                | ((!key_state.select as u8) << 2)
-                | ((!key_state.b as u8) << 1)
-                | (!key_state.a as u8)
+                | ((!bool::from(self.key_state.start) as u8) << 3)
+                | ((!bool::from(self.key_state.select) as u8) << 2)
+                | ((!bool::from(self.key_state.b) as u8) << 1)
+                | (!bool::from(self.key_state.a) as u8)
         } else if self.buttons & 0x10 == 0x0 {
             (self.buttons & 0xf0)
-                | ((!key_state.down as u8) << 3)
-                | ((!key_state.up as u8) << 2)
-                | ((!key_state.left as u8) << 1)
-                | (!key_state.right as u8)
+                | ((!bool::from(self.key_state.down) as u8) << 3)
+                | ((!bool::from(self.key_state.up) as u8) << 2)
+                | ((!bool::from(self.key_state.left) as u8) << 1)
+                | (!bool::from(self.key_state.right) as u8)
         } else {
             return (0xFF, false);
         };
@@ -278,8 +306,8 @@ impl Mmu {
             0xFF4B => self.video.window_x = byte,
             0xFF4D => (), //event!(Level::WARN,"KEY1 prepare speed switch (CGB only) not supported"),
             0xFF4F => self.video.bank_select = byte,
-            0xFF50 => (),//event!(Level::WARN, "Disable boot rom, not implemented"),
-            0xFF6A | 0xFF6B => (),//event!(Level::WARN, "CGB only not supported"),
+            0xFF50 => (), //event!(Level::WARN, "Disable boot rom, not implemented"),
+            0xFF6A | 0xFF6B => (), //event!(Level::WARN, "CGB only not supported"),
             _ => {
                 unimplemented!("IO register not implemented for {:#08X}", pos)
             }
@@ -311,9 +339,11 @@ impl Mmu {
         if self.div_step > DIVIDER_REG_CYCLES_PER_STEP {
             self.div_step = 0;
             self.div = self.div.wrapping_add(1);
+
+            // check for new key events
+            self.update_key_state();
         }
 
-        // todo: reverse this, we shouldn't lock on each cycle
         if self.read_key_state().1 {
             self.interrupt_flags |= InterruptFlags::JOYPAD;
         }
