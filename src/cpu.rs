@@ -1708,13 +1708,13 @@ impl Cpu {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
-
     use crate::apu::Apu;
     use crate::cartridge::CartridgeHeader;
     use crate::cpu::{CpuState, STACK_START};
+    use crate::input::KeyMessage;
     use crate::mmu::Mmu;
-    use crate::{mbc, Cartridge, Cpu, KeyState};
+    use crate::{mbc, Cartridge, Cpu};
+    use std::sync::mpsc::channel;
 
     #[test]
     fn it_executes_call() {
@@ -1726,11 +1726,9 @@ mod tests {
             data: vec![0xCD, 0x03, 0x00],
         };
 
-        let memory = Mmu::new(
-            mbc::from_cartridge(cartridge),
-            Apu::new(),
-            Arc::new(Mutex::new(KeyState::default())),
-        );
+        let channel = channel::<KeyMessage>();
+
+        let memory = Mmu::new(mbc::from_cartridge(cartridge), Apu::new(), channel.1);
 
         let mut cpu = Cpu::new(memory);
         cpu.state = CpuState::Running;
@@ -1751,11 +1749,9 @@ mod tests {
             data: vec![0xCD, 0x04, 0x00, 0x00, 0xC9],
         };
 
-        let memory = Mmu::new(
-            mbc::from_cartridge(cartridge),
-            Apu::new(),
-            Arc::new(Mutex::new(KeyState::default())),
-        );
+        let channel = channel::<KeyMessage>();
+
+        let memory = Mmu::new(mbc::from_cartridge(cartridge), Apu::new(), channel.1);
 
         let mut cpu = Cpu::new(memory);
         cpu.state = CpuState::Running;
