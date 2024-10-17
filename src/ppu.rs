@@ -59,6 +59,7 @@ enum Palette {
 }
 
 bitflags! {
+    #[derive(PartialEq, Debug, Copy, Clone)]
     pub struct LcdStatus: u8 {
         const HBLANK            =  0b00000000;
         const VBLANK            =  0b00000001;
@@ -75,6 +76,7 @@ bitflags! {
         const ALL_INTERRUPT_FLAGS   =  0b01111000;
     }
 
+    #[derive(PartialEq, Debug, Copy, Clone)]
     pub struct LcdControl: u8 {
         const LCD_ENABLE =              0b10000000;
         const WINDOW_TILE_MAP =         0b01000000;
@@ -86,6 +88,7 @@ bitflags! {
         const WINDOW_BG_DISPLAY =       0b00000001;
     }
 
+    #[derive(PartialEq, Debug, Copy, Clone)]
     pub struct ObjectAttributes: u8 {
         const BG_WINDOW_OVER_OBJ    = 0b10000000;
         const Y_FLIP                = 0b01000000;
@@ -96,7 +99,7 @@ bitflags! {
 
 impl LcdStatus {
     pub fn get_video_mode(self) -> u8 {
-        (self & LcdStatus::ALL_MODE_FLAGS).bits
+        (self & LcdStatus::ALL_MODE_FLAGS).bits()
     }
 }
 

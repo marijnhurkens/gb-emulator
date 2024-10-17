@@ -8,15 +8,16 @@ use tracing::{event, Level};
 
 use crate::apu::Apu;
 use crate::cpu::CPU_FREQ;
-use crate::input::Key;
+use crate::input::Button;
 use crate::mbc::Mbc;
 use crate::ppu::{LcdControl, LcdStatus, Ppu, VRAM_START};
-use crate::{KeyMessage, KeyPosition};
+use crate::{ButtonPosition, KeyMessage};
 
 const MEM_SIZE: usize = 1024 * 128;
 const DIVIDER_REG_CYCLES_PER_STEP: u32 = (16_384 / CPU_FREQ) * CPU_FREQ;
 
 bitflags! {
+    #[derive(PartialEq, Debug, Copy, Clone)]
     pub struct InterruptFlags: u8 {
         const VBLANK   =  0b00000001;
         const LCD_STAT =  0b00000010;
@@ -25,6 +26,7 @@ bitflags! {
         const JOYPAD   =  0b00010000;
     }
 
+    #[derive(PartialEq, Debug, Copy, Clone)]
     struct TimerControl: u8 {
         const TIMER_ENABLE = 0b00000100;
         const TIMER_1024   = 0b00000000;
@@ -41,14 +43,14 @@ bitflags! {
 
 #[derive(Debug, Default)]
 struct KeyState {
-    up: KeyPosition,
-    down: KeyPosition,
-    left: KeyPosition,
-    right: KeyPosition,
-    start: KeyPosition,
-    select: KeyPosition,
-    a: KeyPosition,
-    b: KeyPosition,
+    up: ButtonPosition,
+    down: ButtonPosition,
+    left: ButtonPosition,
+    right: ButtonPosition,
+    start: ButtonPosition,
+    select: ButtonPosition,
+    a: ButtonPosition,
+    b: ButtonPosition,
 }
 
 pub struct Mmu {
@@ -114,13 +116,13 @@ impl Mmu {
             0xFF00..=0xFF02 => self.read_io_register(pos),
             0xFF04..=0xFF07 => self.read_io_register(pos),
             0xFF30..=0xFF3F => self.read_io_register(pos),
-            0xFF0F => self.interrupt_flags.bits,
+            0xFF0F => self.interrupt_flags.bits(),
             0xFF10..=0xFF7F => self.read_io_register(pos),
             0xFF80..=0xFFFE => {
                 // High ram, todo
                 self.read_byte_from_storage(pos)
             }
-            0xFFFF => self.interrupt_enable.bits,
+            0xFFFF => self.interrupt_enable.bits(),
             _ => {
                 //event!(Level::ERROR, "Memory map not implemented for {:#04X}", pos);
                 0xFF
@@ -194,14 +196,14 @@ impl Mmu {
     fn update_key_state(&mut self) {
         if let Ok(key_message) = self.key_receiver.try_recv() {
             match key_message.key {
-                Key::Left => self.key_state.left = key_message.key_position,
-                Key::Right => self.key_state.right = key_message.key_position,
-                Key::Up => self.key_state.up = key_message.key_position,
-                Key::Down => self.key_state.down = key_message.key_position,
-                Key::A => self.key_state.a = key_message.key_position,
-                Key::B => self.key_state.b = key_message.key_position,
-                Key::Start => self.key_state.start = key_message.key_position,
-                Key::Select => self.key_state.select = key_message.key_position,
+                Button::Left => self.key_state.left = key_message.key_position,
+                Button::Right => self.key_state.right = key_message.key_position,
+                Button::Up => self.key_state.up = key_message.key_position,
+                Button::Down => self.key_state.down = key_message.key_position,
+                Button::A => self.key_state.a = key_message.key_position,
+                Button::B => self.key_state.b = key_message.key_position,
+                Button::Start => self.key_state.start = key_message.key_position,
+                Button::Select => self.key_state.select = key_message.key_position,
             }
         }
     }

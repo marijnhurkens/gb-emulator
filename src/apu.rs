@@ -137,7 +137,7 @@ impl Apu {
             0xff25 => self.channel_panning = value,
             0xff26 => {
                 self.channel_status =
-                    ChannelStatus::from_bits(value & ChannelStatus::ALL_ENABLED.bits).unwrap()
+                    ChannelStatus::from_bits(value & ChannelStatus::ALL_ENABLED.bits()).unwrap()
             }
             register => panic!("Write to unknown audio register {:#04X}", register),
         };
@@ -150,7 +150,7 @@ impl Apu {
                     | (self.channel_square_one.length_timer & 0b00111111)
             }
             0xff25 => self.channel_panning,
-            0xff26 => self.channel_status.bits,
+            0xff26 => self.channel_status.bits(),
             register => panic!("Read from unknown audio register {:#04X}", register),
         }
     }

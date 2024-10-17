@@ -27,7 +27,7 @@ use tracing_subscriber::Registry;
 use crate::apu::Apu;
 use crate::cartridge::Cartridge;
 use crate::cpu::Cpu;
-use crate::input::{KeyMapping, KeyMessage, KeyPosition, KEY_MAP};
+use crate::input::{ButtonPosition, KeyMapping, KeyMessage, KEY_MAP};
 use crate::mmu::Mmu;
 
 mod apu;
@@ -147,7 +147,7 @@ fn main() {
         audio_stream,
     );
 
-    event::run(ctx, event_loop, state);
+    event::run(ctx, event_loop, state).unwrap();
 }
 
 impl State {
@@ -168,20 +168,20 @@ impl State {
     }
 
     fn check_and_send_key(&mut self, keyboard: &KeyboardContext, mapping: KeyMapping) {
-        if keyboard.is_key_just_pressed(mapping.0) {
+        if keyboard.is_physical_key_just_pressed(&mapping.0) {
             self.key_sender
                 .send(KeyMessage {
                     key: mapping.1,
-                    key_position: KeyPosition::Pressed,
+                    key_position: ButtonPosition::Pressed,
                 })
                 .unwrap();
         }
 
-        if keyboard.is_key_just_released(mapping.0) {
+        if keyboard.is_physical_key_just_released(&mapping.0) {
             self.key_sender
                 .send(KeyMessage {
                     key: mapping.1,
-                    key_position: KeyPosition::Released,
+                    key_position: ButtonPosition::Released,
                 })
                 .unwrap();
         }

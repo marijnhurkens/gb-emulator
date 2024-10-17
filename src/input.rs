@@ -1,25 +1,26 @@
 use ggez::input::keyboard::KeyCode;
+use ggez::winit::keyboard::PhysicalKey;
 
-pub type KeyMapping = (KeyCode, Key);
+pub type KeyMapping = (PhysicalKey, Button);
 pub const KEY_MAP: [KeyMapping; 8] = [
-    (KeyCode::Z, Key::A),
-    (KeyCode::X, Key::B),
-    (KeyCode::Up, Key::Up),
-    (KeyCode::Down, Key::Down),
-    (KeyCode::Left, Key::Left),
-    (KeyCode::Right, Key::Right),
-    (KeyCode::Return, Key::Start),
-    (KeyCode::Backslash, Key::Select),
+    (PhysicalKey::Code(KeyCode::KeyZ), Button::A),
+    (PhysicalKey::Code(KeyCode::KeyX), Button::B),
+    (PhysicalKey::Code(KeyCode::ArrowUp), Button::Up),
+    (PhysicalKey::Code(KeyCode::ArrowDown), Button::Down),
+    (PhysicalKey::Code(KeyCode::ArrowLeft), Button::Left),
+    (PhysicalKey::Code(KeyCode::ArrowRight), Button::Right),
+    (PhysicalKey::Code(KeyCode::Enter), Button::Start),
+    (PhysicalKey::Code(KeyCode::Backslash), Button::Select),
 ];
 
 #[derive(Debug, Copy, Clone)]
 pub struct KeyMessage {
-    pub key: Key,
-    pub key_position: KeyPosition,
+    pub key: Button,
+    pub key_position: ButtonPosition,
 }
 
 #[derive(Debug, Copy, Clone)]
-pub enum Key {
+pub enum Button {
     Left,
     Right,
     Up,
@@ -31,21 +32,21 @@ pub enum Key {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub enum KeyPosition {
+pub enum ButtonPosition {
     Pressed,
     Released,
 }
 
-impl From<KeyPosition> for bool {
-    fn from(value: KeyPosition) -> Self {
+impl From<ButtonPosition> for bool {
+    fn from(value: ButtonPosition) -> Self {
         match value {
-            KeyPosition::Pressed => true,
-            KeyPosition::Released => false,
+            ButtonPosition::Pressed => true,
+            ButtonPosition::Released => false,
         }
     }
 }
 
-impl Default for KeyPosition {
+impl Default for ButtonPosition {
     fn default() -> Self {
         Self::Released
     }
