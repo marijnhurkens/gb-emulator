@@ -19,7 +19,7 @@ pub fn decode(memory: &mut Mmu, pc: u16) -> (Instruction, u16) {
             let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
             (
                 Instruction::LD(Load {
-                    source: Operand::ImmediateOperand(ImmediateOperand::D16(operand)),
+                    source: Operand::Immediate(ImmediateOperand::D16(operand)),
                     target,
                 }),
                 3,
@@ -70,7 +70,7 @@ pub fn decode(memory: &mut Mmu, pc: u16) -> (Instruction, u16) {
             let operand = memory.read_byte(pc + 1);
             (
                 Instruction::LD(Load {
-                    source: Operand::ImmediateOperand(ImmediateOperand::D8(operand)),
+                    source: Operand::Immediate(ImmediateOperand::D8(operand)),
                     target,
                 }),
                 2,
@@ -82,7 +82,7 @@ pub fn decode(memory: &mut Mmu, pc: u16) -> (Instruction, u16) {
             (
                 Instruction::LD(Load {
                     source: Operand::StackPointer(None),
-                    target: Operand::ImmediateOperand(ImmediateOperand::A16(operand)),
+                    target: Operand::Immediate(ImmediateOperand::A16(operand)),
                 }),
                 3,
             )
@@ -249,7 +249,7 @@ pub fn decode(memory: &mut Mmu, pc: u16) -> (Instruction, u16) {
             let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
             (
                 Instruction::JP(
-                    Operand::ImmediateOperand(ImmediateOperand::A16(operand)),
+                    Operand::Immediate(ImmediateOperand::A16(operand)),
                     Some(Condition::NZ),
                 ),
                 3,
@@ -258,10 +258,7 @@ pub fn decode(memory: &mut Mmu, pc: u16) -> (Instruction, u16) {
         0xC3 => {
             let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
             (
-                Instruction::JP(
-                    Operand::ImmediateOperand(ImmediateOperand::A16(operand)),
-                    None,
-                ),
+                Instruction::JP(Operand::Immediate(ImmediateOperand::A16(operand)), None),
                 3,
             )
         }
@@ -292,7 +289,7 @@ pub fn decode(memory: &mut Mmu, pc: u16) -> (Instruction, u16) {
         }
         0xC6 => (
             Instruction::ADD(Add {
-                source: Operand::ImmediateOperand(ImmediateOperand::D8(memory.read_byte(pc + 1))),
+                source: Operand::Immediate(ImmediateOperand::D8(memory.read_byte(pc + 1))),
                 target: Operand::Register(Register::A),
             }),
             2,
@@ -301,7 +298,7 @@ pub fn decode(memory: &mut Mmu, pc: u16) -> (Instruction, u16) {
             let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
             (
                 Instruction::JP(
-                    Operand::ImmediateOperand(ImmediateOperand::A16(operand)),
+                    Operand::Immediate(ImmediateOperand::A16(operand)),
                     Some(Condition::Z),
                 ),
                 3,
@@ -323,7 +320,7 @@ pub fn decode(memory: &mut Mmu, pc: u16) -> (Instruction, u16) {
             (Instruction::Call(ImmediateOperand::A16(operand), None), 3)
         }
         0xCE => (
-            Instruction::ADC(Operand::ImmediateOperand(ImmediateOperand::D8(
+            Instruction::ADC(Operand::Immediate(ImmediateOperand::D8(
                 memory.read_byte(pc + 1),
             ))),
             2,
@@ -332,7 +329,7 @@ pub fn decode(memory: &mut Mmu, pc: u16) -> (Instruction, u16) {
             let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
             (
                 Instruction::JP(
-                    Operand::ImmediateOperand(ImmediateOperand::A16(operand)),
+                    Operand::Immediate(ImmediateOperand::A16(operand)),
                     Some(Condition::NC),
                 ),
                 3,
@@ -346,7 +343,7 @@ pub fn decode(memory: &mut Mmu, pc: u16) -> (Instruction, u16) {
             )
         }
         0xD6 => (
-            Instruction::SUB(Operand::ImmediateOperand(ImmediateOperand::D8(
+            Instruction::SUB(Operand::Immediate(ImmediateOperand::D8(
                 memory.read_byte(pc + 1),
             ))),
             2,
@@ -359,7 +356,7 @@ pub fn decode(memory: &mut Mmu, pc: u16) -> (Instruction, u16) {
             )
         }
         0xDE => (
-            Instruction::SBC(Operand::ImmediateOperand(ImmediateOperand::D8(
+            Instruction::SBC(Operand::Immediate(ImmediateOperand::D8(
                 memory.read_byte(pc + 1),
             ))),
             2,
@@ -371,7 +368,7 @@ pub fn decode(memory: &mut Mmu, pc: u16) -> (Instruction, u16) {
             let operand = u16::from_le_bytes([memory.read_byte(pc + 1), memory.read_byte(pc + 2)]);
             (
                 Instruction::JP(
-                    Operand::ImmediateOperand(ImmediateOperand::A16(operand)),
+                    Operand::Immediate(ImmediateOperand::A16(operand)),
                     Some(Condition::C),
                 ),
                 3,
@@ -394,7 +391,7 @@ pub fn decode(memory: &mut Mmu, pc: u16) -> (Instruction, u16) {
             1,
         ),
         0xE6 => (
-            Instruction::AND(Operand::ImmediateOperand(ImmediateOperand::D8(
+            Instruction::AND(Operand::Immediate(ImmediateOperand::D8(
                 memory.read_byte(pc + 1),
             ))),
             2,
@@ -403,7 +400,7 @@ pub fn decode(memory: &mut Mmu, pc: u16) -> (Instruction, u16) {
             let operand = helpers::u8_to_i8(memory.read_byte(pc + 1));
             (
                 Instruction::ADD(Add {
-                    source: Operand::ImmediateOperand(ImmediateOperand::S8(operand)),
+                    source: Operand::Immediate(ImmediateOperand::S8(operand)),
                     target: Operand::StackPointer(None),
                 }),
                 2,
@@ -431,7 +428,7 @@ pub fn decode(memory: &mut Mmu, pc: u16) -> (Instruction, u16) {
         0xEE => {
             let operand = memory.read_byte(pc + 1);
             (
-                Instruction::XOR(Operand::ImmediateOperand(ImmediateOperand::D8(operand))),
+                Instruction::XOR(Operand::Immediate(ImmediateOperand::D8(operand))),
                 2,
             )
         }
@@ -458,7 +455,7 @@ pub fn decode(memory: &mut Mmu, pc: u16) -> (Instruction, u16) {
         0xF6 => {
             let operand = memory.read_byte(pc + 1);
             (
-                Instruction::OR(Operand::ImmediateOperand(ImmediateOperand::D8(operand))),
+                Instruction::OR(Operand::Immediate(ImmediateOperand::D8(operand))),
                 2,
             )
         }
@@ -495,7 +492,7 @@ pub fn decode(memory: &mut Mmu, pc: u16) -> (Instruction, u16) {
         0xFE => {
             let operand = memory.read_byte(pc + 1);
             (
-                Instruction::CP(Operand::ImmediateOperand(ImmediateOperand::D8(operand))),
+                Instruction::CP(Operand::Immediate(ImmediateOperand::D8(operand))),
                 2,
             )
         }
@@ -756,7 +753,7 @@ pub enum Operand {
     Register(Register),
     RegisterPair(RegisterPair),
     MemoryLocation(MemoryLocation),
-    ImmediateOperand(ImmediateOperand),
+    Immediate(ImmediateOperand),
     StackPointer(Option<ImmediateOperand>),
 }
 
@@ -765,7 +762,7 @@ impl Display for Operand {
         match self {
             Operand::Register(register) => write!(f, "{}", register),
             Operand::MemoryLocation(memory) => write!(f, "{}", memory),
-            Operand::ImmediateOperand(immediate_operand) => write!(f, "{}", immediate_operand),
+            Operand::Immediate(immediate_operand) => write!(f, "{}", immediate_operand),
             Operand::RegisterPair(register_pair) => write!(f, "{}", register_pair),
             Operand::StackPointer(immediate_operand) => {
                 if let Some(operand) = immediate_operand {

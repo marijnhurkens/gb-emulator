@@ -882,7 +882,7 @@ impl Cpu {
                 }
                 _ => panic!("not implemented"),
             },
-            Operand::ImmediateOperand(ImmediateOperand::D8(operand)) => match load.target {
+            Operand::Immediate(ImmediateOperand::D8(operand)) => match load.target {
                 Operand::Register(target) => {
                     self.set_register(target, operand);
                     2
@@ -897,14 +897,14 @@ impl Cpu {
                     panic!("not implemented")
                 }
             },
-            Operand::ImmediateOperand(ImmediateOperand::A16(operand)) => match load.target {
+            Operand::Immediate(ImmediateOperand::A16(operand)) => match load.target {
                 Operand::RegisterPair(target) => {
                     self.set_register_pair(target, operand);
                     3
                 }
                 _ => panic!("not implemented"),
             },
-            Operand::ImmediateOperand(ImmediateOperand::D16(operand)) => match load.target {
+            Operand::Immediate(ImmediateOperand::D16(operand)) => match load.target {
                 Operand::RegisterPair(target) => {
                     self.set_register_pair(target, operand);
                     3
@@ -919,7 +919,7 @@ impl Cpu {
                 }
             },
             Operand::StackPointer(None) => match load.target {
-                Operand::ImmediateOperand(ImmediateOperand::A16(operand)) => {
+                Operand::Immediate(ImmediateOperand::A16(operand)) => {
                     self.mmu.write_word(operand, self.sp);
                     5
                 }
@@ -998,7 +998,7 @@ impl Cpu {
 
                 cycles = 3;
             }
-            Operand::ImmediateOperand(_) => panic!("not implemented"),
+            Operand::Immediate(_) => panic!("not implemented"),
             Operand::StackPointer(None) => {
                 self.set_sp(self.sp.wrapping_add(1));
                 cycles = 2;
@@ -1038,7 +1038,7 @@ impl Cpu {
                 self.flags.h = (byte & 0xF) == 0xF;
                 cycles = 3;
             }
-            Operand::ImmediateOperand(_) => panic!("not implemented"),
+            Operand::Immediate(_) => panic!("not implemented"),
             Operand::StackPointer(None) => {
                 self.set_sp(self.sp.wrapping_sub(1));
                 cycles = 2;
@@ -1059,7 +1059,7 @@ impl Cpu {
                 _ => panic!("Should not happen"),
             },
             Operand::RegisterPair(_) => panic!("Should not happen"),
-            Operand::ImmediateOperand(immediate_operand) => match immediate_operand {
+            Operand::Immediate(immediate_operand) => match immediate_operand {
                 ImmediateOperand::D8(operand) => (operand, 2),
                 _ => panic!("Should not happen"),
             },
@@ -1085,7 +1085,7 @@ impl Cpu {
                 _ => panic!("not implemented"),
             }, // 2 cycles
             Operand::RegisterPair(_) => panic!("should not happen"),
-            Operand::ImmediateOperand(ImmediateOperand::D8(operand)) => (operand, 2),
+            Operand::Immediate(ImmediateOperand::D8(operand)) => (operand, 2),
             Operand::StackPointer(_) => panic!("should not happen"),
             _ => panic!("should not happen"),
         };
@@ -1109,7 +1109,7 @@ impl Cpu {
                 _ => panic!("should not happend"),
             },
             Operand::RegisterPair(_) => panic!("should not happen"),
-            Operand::ImmediateOperand(operand) => match operand {
+            Operand::Immediate(operand) => match operand {
                 ImmediateOperand::D8(operand) => (operand, 2),
                 _ => panic!("should not happend"),
             },
@@ -1150,7 +1150,7 @@ impl Cpu {
                 }
                 _ => panic!("should not happen"),
             },
-            Operand::ImmediateOperand(operand) => match operand {
+            Operand::Immediate(operand) => match operand {
                 ImmediateOperand::D8(byte) => {
                     cycles = 2;
                     byte
@@ -1184,7 +1184,7 @@ impl Cpu {
                 }
                 _ => panic!("should not happen"),
             },
-            Operand::ImmediateOperand(operand) => match operand {
+            Operand::Immediate(operand) => match operand {
                 ImmediateOperand::D8(byte) => {
                     cycles = 2;
                     byte
@@ -1211,7 +1211,7 @@ impl Cpu {
     fn add(&mut self, add: Add) -> usize {
         let mut cycles = 1;
         let result = match add.source {
-            Operand::ImmediateOperand(source_operand) => match source_operand {
+            Operand::Immediate(source_operand) => match source_operand {
                 ImmediateOperand::D8(source_data) => match add.target {
                     Operand::Register(target_register) => {
                         cycles = 2;
@@ -1326,7 +1326,7 @@ impl Cpu {
     fn adc(&mut self, operand: Operand) -> usize {
         let mut cycles = 1;
         let result = match operand {
-            Operand::ImmediateOperand(source_operand) => match source_operand {
+            Operand::Immediate(source_operand) => match source_operand {
                 ImmediateOperand::D8(source_data) => {
                     cycles = 2;
                     let current_register = self.a;
@@ -1391,7 +1391,7 @@ impl Cpu {
 
         let data = match operand {
             Operand::Register(register) => self.get_register(register),
-            Operand::ImmediateOperand(ImmediateOperand::D8(operand)) => {
+            Operand::Immediate(ImmediateOperand::D8(operand)) => {
                 cycles = 2;
                 operand
             }
@@ -1500,7 +1500,7 @@ impl Cpu {
                 cycles = 1;
                 self.get_register_pair(pair)
             }
-            Operand::ImmediateOperand(ImmediateOperand::A16(operand)) => operand,
+            Operand::Immediate(ImmediateOperand::A16(operand)) => operand,
             _ => panic!("should not happend"),
         };
 
