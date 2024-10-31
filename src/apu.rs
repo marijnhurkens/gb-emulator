@@ -21,9 +21,9 @@ const WAVE_PATTERN: [[i32; 8]; 4] = [
 
 pub struct Apu {
     pub audio_buffer: Arc<Mutex<VecDeque<i16>>>,
-    channel_status: ChannelStatus,
+    master_control: MasterControl,
     master_volume: MasterVolume,
-    channel_panning: u8,
+    channel_panning: ChannelPanning,
     channel_square_one: ChannelSquare,
     channel_square_two: ChannelSquare,
     time: u32,
@@ -33,12 +33,12 @@ impl Apu {
     pub fn new() -> Apu {
         Apu {
             audio_buffer: Arc::new(Mutex::new(VecDeque::new())),
-            channel_status: ChannelStatus::empty(),
+            master_control: MasterControl::empty(),
             master_volume: MasterVolume {
                 volume_left: 0,
                 volume_right: 0,
             },
-            channel_panning: 0,
+            channel_panning: ChannelPanning::empty(),
             channel_square_one: ChannelSquare::new(),
             channel_square_two: ChannelSquare::new(),
             time: 0,
@@ -48,12 +48,12 @@ impl Apu {
     pub fn new_with_buffer(audio_buffer: Arc<Mutex<VecDeque<i16>>>) -> Apu {
         Apu {
             audio_buffer,
-            channel_status: ChannelStatus::empty(),
+            master_control: MasterControl::empty(),
             master_volume: MasterVolume {
                 volume_left: 0,
                 volume_right: 0,
             },
-            channel_panning: 0,
+            channel_panning: ChannelPanning::empty(),
             channel_square_one: ChannelSquare::new(),
             channel_square_two: ChannelSquare::new(),
             time: 0,
@@ -79,7 +79,15 @@ impl Apu {
 
     pub fn write_register(&mut self, reg: u16, value: u8) {
         match reg {
-            0xff10 => (),
+            0xff10 => {
+                self.channel_square_one.sweep_pace = (value & 0b01110000) >> 4;
+                self.channel_square_one.sweep_direction = if (value & 0b00001000) >> 4 == 0 {
+                    SweepDirection::Up
+                } else {
+                    SweepDirection::Down
+                };
+                self.channel_square_one.sweep_individual_step = value & 0b00000111;
+            }
             0xff11 => {
                 self.channel_square_one.duty = (value & 0b11000000) >> 6;
                 self.channel_square_one.length_timer = value & 0b00111111;
@@ -134,10 +142,11 @@ impl Apu {
                 self.master_volume.volume_left = (value & 0b01110000) >> 4;
                 self.master_volume.volume_right = value & 0b00000111;
             }
-            0xff25 => self.channel_panning = value,
+            0xff25 => self.channel_panning = ChannelPanning::from_bits(value).unwrap(),
             0xff26 => {
-                self.channel_status =
-                    ChannelStatus::from_bits(value & ChannelStatus::ALL_ENABLED.bits()).unwrap()
+                // only audio enabled is writable
+                self.master_control =
+                    MasterControl::from_bits(value & MasterControl::AUDIO_ENABLED.bits()).unwrap()
             }
             register => panic!("Write to unknown audio register {:#04X}", register),
         };
@@ -145,25 +154,85 @@ impl Apu {
 
     pub fn read_register(&self, reg: u16) -> u8 {
         match reg {
+            0xff10 => {
+                (self.channel_square_one.sweep_pace << 4)
+                    | (if self.channel_square_one.sweep_direction == SweepDirection::Up {
+                        0b00000000
+                    } else {
+                        0b00001000
+                    })
+                    | (self.channel_square_one.sweep_individual_step)
+            }
             0xff11 => {
-                (self.channel_square_one.duty & 0b11000000)
+                (self.channel_square_one.duty << 6)
                     | (self.channel_square_one.length_timer & 0b00111111)
             }
-            0xff25 => self.channel_panning,
-            0xff26 => self.channel_status.bits(),
+            0xff25 => self.channel_panning.bits(),
+            0xff26 => {
+                self.master_control.bits()
+                    & self.channel_square_one.enabled.as_u8()
+                    & self.channel_square_two.enabled.as_u8() << 1
+            }
             register => panic!("Read from unknown audio register {:#04X}", register),
         }
     }
 
     fn mix_buffers(&mut self) {
+        if !self.master_control.contains(MasterControl::AUDIO_ENABLED) {
+            return;
+        }
+
         let (channel_1_count, channel_1_buffer) = self.channel_square_one.mix_buffer();
         let (channel_2_count, channel_2_buffer) = self.channel_square_two.mix_buffer();
         assert_eq!(channel_1_count, channel_2_count);
 
+        let mut channel_left: [i16; SAMPLES_PER_FRAME + 100] = [0; SAMPLES_PER_FRAME + 100];
+        let mut channel_right: [i16; SAMPLES_PER_FRAME + 100] = [0; SAMPLES_PER_FRAME + 100];
+
+        for ((mixed_sample, channel_1_sample), channel_2_sample) in channel_left
+            .iter_mut()
+            .zip(channel_1_buffer)
+            .zip(channel_2_buffer)
+        {
+            if self
+                .channel_panning
+                .contains(ChannelPanning::CHANNEL_1_LEFT)
+            {
+                *mixed_sample += channel_1_sample;
+            }
+
+            if self
+                .channel_panning
+                .contains(ChannelPanning::CHANNEL_2_LEFT)
+            {
+                *mixed_sample += channel_2_sample;
+            }
+        }
+
+        for ((mixed_sample, channel_1_sample), channel_2_sample) in channel_right
+            .iter_mut()
+            .zip(channel_1_buffer)
+            .zip(channel_2_buffer)
+        {
+            if self
+                .channel_panning
+                .contains(ChannelPanning::CHANNEL_1_RIGHT)
+            {
+                *mixed_sample += channel_1_sample;
+            }
+
+            if self
+                .channel_panning
+                .contains(ChannelPanning::CHANNEL_2_RIGHT)
+            {
+                *mixed_sample += channel_2_sample;
+            }
+        }
+
         let mut buffer_lock = self.audio_buffer.lock().unwrap();
         for i in 0..channel_1_count.min(channel_2_count) {
-            buffer_lock.push_back(channel_1_buffer[i]);
-            buffer_lock.push_back(channel_2_buffer[i]);
+            buffer_lock.push_back(channel_left[i]);
+            buffer_lock.push_back(channel_right[i]);
         }
     }
 
@@ -195,6 +264,10 @@ struct ChannelSquare {
     envelope_direction: bool,
     envelope_pace: u8,
     envelope_div: u8,
+    sweep_pace: u8,
+    sweep_direction: SweepDirection,
+    sweep_individual_step: u8,
+    sweep_div: u8,
     pub blip_buf: BlipBuf,
 }
 
@@ -219,6 +292,10 @@ impl ChannelSquare {
             envelope_direction: false,
             envelope_pace: 0,
             envelope_div: 0,
+            sweep_pace: 0,
+            sweep_direction: SweepDirection::Up,
+            sweep_individual_step: 0,
+            sweep_div: 0,
             blip_buf: blip,
         }
     }
@@ -266,6 +343,8 @@ impl ChannelSquare {
                     if self.length_timer_enabled {
                         self.length_timer += 1;
                     }
+
+                    self.step_sweep();
                 }
                 Some(FrameSequencerClock::Volume) => self.step_envelope(),
             }
@@ -322,6 +401,28 @@ impl ChannelSquare {
                 self.volume += 1;
             } else if !self.envelope_direction && self.volume > 0 {
                 self.volume -= 1;
+            }
+        }
+    }
+
+    /// Called at 128 Hz ticks
+    fn step_sweep(&mut self) {
+        if self.sweep_pace == 0 {
+            return;
+        }
+
+        self.sweep_div += 1;
+
+        if self.sweep_div == self.sweep_pace {
+            self.sweep_div = 0;
+
+            let step = self.timer.period / 2u32.pow(self.sweep_individual_step as u32);
+            if self.sweep_direction == SweepDirection::Up {
+                dbg!("ch sweep up", step);
+                self.timer.period += step;
+            } else {
+                dbg!("ch sweep down", step);
+                self.timer.period -= step;
             }
         }
     }
@@ -396,14 +497,34 @@ enum FrameSequencerClock {
     LengthSweep,
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum SweepDirection {
+    Up,
+    Down,
+}
+
 bitflags! {
-    pub struct ChannelStatus: u8 {
-        const ALL_ENABLED = 0b10000000;
+    #[derive(Debug)]
+    pub struct MasterControl: u8 {
+        const AUDIO_ENABLED = 0b10000000;
         const CHANNEL_4_ENABLED = 0b00001000;
         const CHANNEL_3_ENABLED = 0b00000100;
         const CHANNEL_2_ENABLED = 0b00000010;
         const CHANNEL_1_ENABLED = 0b00000001;
     }
+
+    #[derive(Debug)]
+    pub struct ChannelPanning: u8 {
+        const CHANNEL_4_LEFT =  0b10000000;
+        const CHANNEL_3_LEFT =  0b01000000;
+        const CHANNEL_2_LEFT =  0b00100000;
+        const CHANNEL_1_LEFT =  0b00010000;
+        const CHANNEL_4_RIGHT = 0b00001000;
+        const CHANNEL_3_RIGHT = 0b00000100;
+        const CHANNEL_2_RIGHT = 0b00000010;
+        const CHANNEL_1_RIGHT = 0b00000001;
+    }
+
 }
 
 struct MasterVolume {
