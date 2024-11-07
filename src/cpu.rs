@@ -1,5 +1,3 @@
-use std::sync::{Arc, Mutex};
-
 use bitvec::macros::internal::funty::Fundamental;
 use console::Term;
 use tracing::{event, Level};
@@ -9,7 +7,6 @@ use crate::instructions::{
     Operand, Register, RegisterPair,
 };
 use crate::mmu::{InterruptFlags, Mmu};
-use crate::ScreenBuffer;
 
 pub const CPU_FREQ: u32 = 4_194_304;
 const NANO_SECONDS_PER_CYCLE: f64 = 1_000_000_000.0 / CPU_FREQ as f64;
@@ -93,22 +90,18 @@ impl Cpu {
         }
     }
 
-    pub fn run(
-        &mut self,
-        screen_buffer: Option<Arc<Mutex<ScreenBuffer>>>,
-        break_point: Option<u16>,
-    ) {
+    pub fn run(&mut self, break_point: Option<u16>) {
         self.break_point = break_point;
         self.state = CpuState::Running;
 
-        //self.log_doctor();
+        // self.log_doctor();
 
         loop {
-            self.cycle(&screen_buffer);
+            self.cycle();
         }
     }
 
-    pub fn cycle(&mut self, screen_buffer: &Option<Arc<Mutex<ScreenBuffer>>>) {
+    pub fn cycle(&mut self) {
         if self.pc as usize > 0xFFFF {
             panic!("PC out of bounds");
         }
@@ -120,7 +113,7 @@ impl Cpu {
             }
         }
 
-        let t_cycles = if self.handle_interrupts(screen_buffer) > 0 {
+        let t_cycles = if self.handle_interrupts() > 0 {
             4 * 4
         } else if self.state == CpuState::Halted {
             4
@@ -134,7 +127,7 @@ impl Cpu {
             self.process_instruction(instruction) * 4
         };
 
-        //self.log_doctor();
+        // self.log_doctor();
 
         if self.state == CpuState::Stopped {
             let term = Term::stdout();
@@ -159,7 +152,7 @@ impl Cpu {
         self.mmu.handle_serial();
     }
 
-    fn handle_interrupts(&mut self, screen_buffer: &Option<Arc<Mutex<ScreenBuffer>>>) -> usize {
+    fn handle_interrupts(&mut self) -> usize {
         // When an interrupt is requested we wake from HALT, handle the interrupt if IME is set,
         // and then continue with the next instruction.
         if ((self.mmu.interrupt_flags & self.mmu.interrupt_enable) != InterruptFlags::empty())
@@ -172,13 +165,6 @@ impl Cpu {
             if self.mmu.interrupt_flags.contains(InterruptFlags::VBLANK)
                 && self.mmu.interrupt_enable.contains(InterruptFlags::VBLANK)
             {
-                // Draw to screen
-                if let Some(buffer) = &screen_buffer {
-                    let mut guard = buffer.lock().unwrap();
-                    (*guard) = self.mmu.video.read_screen_buffer();
-                    drop(guard);
-                }
-
                 self.interrupts_enabled = false;
                 let interrupt_flags =
                     InterruptFlags::from_bits(self.mmu.read_byte(0xFF0F)).unwrap();
@@ -1601,16 +1587,16 @@ impl Cpu {
 
     fn debug_video(&self) {
         event!(Level::ERROR, "--------- VIDEO -----------");
-        event!(Level::ERROR, "Video mode: {:?}", self.mmu.video.mode);
+        event!(Level::ERROR, "Video mode: {:?}", self.mmu.ppu.mode);
         event!(
             Level::ERROR,
             "Video lcd control: {:?}",
-            self.mmu.video.lcd_control
+            self.mmu.ppu.lcd_control
         );
         event!(
             Level::ERROR,
             "Video lcd status: {:?}",
-            self.mmu.video.lcd_status
+            self.mmu.ppu.lcd_status
         );
     }
 
@@ -1713,8 +1699,10 @@ mod tests {
     use crate::cpu::{CpuState, STACK_START};
     use crate::input::KeyMessage;
     use crate::mmu::Mmu;
-    use crate::{mbc, Cartridge, Cpu};
+    use crate::ppu::Ppu;
+    use crate::{mbc, Cartridge, Cpu, SCREEN_BUFFER_SIZE};
     use std::sync::mpsc::channel;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn it_executes_call() {
@@ -1728,12 +1716,19 @@ mod tests {
 
         let channel = channel::<KeyMessage>();
 
-        let memory = Mmu::new(mbc::from_cartridge(cartridge), Apu::new(), channel.1);
+        let buffer = Arc::new(Mutex::new([0; SCREEN_BUFFER_SIZE]));
+
+        let memory = Mmu::new(
+            mbc::from_cartridge(cartridge),
+            Apu::new(),
+            Ppu::new(buffer),
+            channel.1,
+        );
 
         let mut cpu = Cpu::new(memory);
         cpu.state = CpuState::Running;
         cpu.pc = 0;
-        cpu.cycle(&None);
+        cpu.cycle();
 
         assert_eq!(cpu.pc, 0x03);
         assert_eq!(cpu.sp, STACK_START - 2);
@@ -1751,13 +1746,20 @@ mod tests {
 
         let channel = channel::<KeyMessage>();
 
-        let memory = Mmu::new(mbc::from_cartridge(cartridge), Apu::new(), channel.1);
+        let buffer = Arc::new(Mutex::new([0; SCREEN_BUFFER_SIZE]));
+
+        let memory = Mmu::new(
+            mbc::from_cartridge(cartridge),
+            Apu::new(),
+            Ppu::new(buffer),
+            channel.1,
+        );
 
         let mut cpu = Cpu::new(memory);
         cpu.state = CpuState::Running;
         cpu.pc = 0;
-        cpu.cycle(&None);
-        cpu.cycle(&None);
+        cpu.cycle();
+        cpu.cycle();
 
         assert_eq!(cpu.pc, 0x03);
         assert_eq!(cpu.sp, STACK_START);

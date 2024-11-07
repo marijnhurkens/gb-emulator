@@ -29,6 +29,7 @@ use crate::cartridge::Cartridge;
 use crate::cpu::Cpu;
 use crate::input::{ButtonPosition, KeyMapping, KeyMessage, KEY_MAP};
 use crate::mmu::Mmu;
+use crate::ppu::Ppu;
 
 mod apu;
 mod cartridge;
@@ -110,7 +111,7 @@ fn main() {
     let cartridge = Cartridge::load_rom(data.clone());
 
     let screen_buffer: Arc<Mutex<ScreenBuffer>> = Arc::new(Mutex::new([0; SCREEN_BUFFER_SIZE]));
-    let cpu_screen_buffer = screen_buffer.clone();
+    let ppu_screen_buffer = screen_buffer.clone();
 
     let (audio_stream, audio_buffer) = setup_audio();
     let audio_buffer_apu = audio_buffer.clone();
@@ -119,7 +120,8 @@ fn main() {
 
     let mbc = mbc::from_cartridge(cartridge);
     let apu = Apu::new_with_buffer(audio_buffer_apu);
-    let mmu = Mmu::new(mbc, apu, key_receiver);
+    let ppu = Ppu::new(ppu_screen_buffer);
+    let mmu = Mmu::new(mbc, apu, ppu, key_receiver);
     let mut cpu = Cpu::new(mmu);
 
     let break_point = args
@@ -127,7 +129,7 @@ fn main() {
         .map(|break_point| u16::from_str_radix(break_point.trim_start_matches("0x"), 16).unwrap());
 
     thread::spawn(move || {
-        cpu.run(Some(cpu_screen_buffer), break_point);
+        cpu.run(break_point);
     });
 
     let (mut ctx, event_loop) = ContextBuilder::new("gb_emu", "")
@@ -265,7 +267,7 @@ fn setup_audio() -> (Stream, Arc<Mutex<VecDeque<i16>>>) {
         let out_len = input_buffer.len().min(output_buffer.len());
 
         if input_buffer.len() == 0 {
-            dbg!("Buffer under run");
+            return;
         }
 
         for (i, sample) in input_buffer.drain(..out_len).enumerate() {

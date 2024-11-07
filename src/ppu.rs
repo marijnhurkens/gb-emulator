@@ -1,10 +1,10 @@
-use std::io::{Cursor, Read, Write};
-
 use bitflags::bitflags;
 use byteorder::{ReadBytesExt, WriteBytesExt};
+use std::io::{Cursor, Read, Write};
+use std::sync::{Arc, Mutex};
 
 use crate::mmu::InterruptFlags;
-use crate::{helpers, SCREEN_BUFFER_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH};
+use crate::{helpers, ScreenBuffer, SCREEN_BUFFER_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 pub const VRAM_START: u16 = 0x8000;
 const VRAM_END: u16 = 0xA000;
@@ -24,7 +24,8 @@ pub struct Ppu {
     mode_step: usize,
     pub vram: Cursor<Vec<u8>>,
     pub oam: Cursor<Vec<u8>>,
-    pub screen_buffer: Cursor<Vec<u8>>,
+    screen_buffer: Cursor<Vec<u8>>,
+    external_screen_buffer: Arc<Mutex<ScreenBuffer>>,
     pub line: u8,
     pub lyc: u8,
     pub scy: u8,
@@ -42,7 +43,7 @@ pub struct Ppu {
     pub bank_select: u8,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 #[repr(u8)]
 pub enum VideoMode {
     OamRead = 2,
@@ -104,18 +105,19 @@ impl LcdStatus {
 }
 
 impl Ppu {
-    pub fn new() -> Self {
+    pub fn new(external_screen_buffer: Arc<Mutex<ScreenBuffer>>) -> Self {
         Self {
             mode: VideoMode::OamRead,
             vram: Cursor::new(vec![0; VRAM_SIZE as usize]),
             oam: Cursor::new(vec![0; OAM_SIZE as usize]),
             screen_buffer: Cursor::new(vec![0; SCREEN_BUFFER_SIZE]),
+            external_screen_buffer,
             mode_step: 0,
             line: 0x91,
             lyc: 0,
             scy: 0,
             scx: 0,
-            lcd_control: LcdControl::empty(),
+            lcd_control: LcdControl::from_bits(0x91).unwrap(),
             lcd_status: LcdStatus::empty(),
             bg_palette: 0,
             obj_0_palette: 0,
@@ -127,6 +129,10 @@ impl Ppu {
     }
 
     pub fn step(&mut self, interrupt_flags: InterruptFlags) -> InterruptFlags {
+        if !self.lcd_control.contains(LcdControl::LCD_ENABLE) {
+            return interrupt_flags;
+        }
+
         let mut interrupt_flags = interrupt_flags;
         // keep track of the various interrupt which can trigger a STAT interrupt
         let mut stat_interrupt = LcdStatus::empty();
@@ -138,7 +144,7 @@ impl Ppu {
                 if self.mode_step >= 80 {
                     self.mode_step = 0;
                     self.mode = VideoMode::VramRead;
-                    self.lcd_status -= LcdStatus::ALL_MODE_FLAGS;
+                    self.lcd_status &= !LcdStatus::ALL_MODE_FLAGS;
                     self.lcd_status |= LcdStatus::VRAM_READ;
                 }
             }
@@ -147,7 +153,7 @@ impl Ppu {
                     self.draw_line();
                     self.mode_step = 0;
                     self.mode = VideoMode::HBlank;
-                    self.lcd_status -= LcdStatus::ALL_MODE_FLAGS;
+                    self.lcd_status &= !LcdStatus::ALL_MODE_FLAGS;
                     self.lcd_status |= LcdStatus::HBLANK;
                     stat_interrupt |= LcdStatus::HBLANK_INTERRUPT;
                 }
@@ -160,13 +166,13 @@ impl Ppu {
                     if self.line >= 143 {
                         self.mode = VideoMode::VBlank;
                         // set the lcd stat register and set the vblank interrupt
-                        self.lcd_status -= LcdStatus::ALL_MODE_FLAGS;
+                        self.lcd_status &= !LcdStatus::ALL_MODE_FLAGS;
                         self.lcd_status |= LcdStatus::VBLANK;
                         stat_interrupt |= LcdStatus::VBLANK_INTERRUPT;
                         interrupt_flags |= InterruptFlags::VBLANK;
                     } else {
                         self.mode = VideoMode::OamRead;
-                        self.lcd_status -= LcdStatus::ALL_MODE_FLAGS;
+                        self.lcd_status &= !LcdStatus::ALL_MODE_FLAGS;
                         self.lcd_status |= LcdStatus::OAM;
                         stat_interrupt |= LcdStatus::OAM_INTERRUPT;
                     }
@@ -178,10 +184,10 @@ impl Ppu {
                     self.line += 1;
 
                     if self.line > 153 {
-                        //self.clear_screen_buffer();
+                        self.flip_screen_buffer();
                         self.mode = VideoMode::OamRead;
                         self.line = 0;
-                        self.lcd_status -= LcdStatus::ALL_MODE_FLAGS;
+                        self.lcd_status &= !LcdStatus::ALL_MODE_FLAGS;
                         self.lcd_status |= LcdStatus::OAM;
                         stat_interrupt |= LcdStatus::OAM_INTERRUPT;
                     }
@@ -193,7 +199,7 @@ impl Ppu {
             self.lcd_status |= LcdStatus::LYC;
             stat_interrupt |= LcdStatus::LYC_INTERRUPT;
         } else {
-            self.lcd_status -= LcdStatus::LYC
+            self.lcd_status &= !LcdStatus::LYC
         }
 
         // check if we need to trigger the STAT interrupt, this is only the case if any of the modes
@@ -206,7 +212,7 @@ impl Ppu {
         interrupt_flags
     }
 
-    pub fn read_screen_buffer(&mut self) -> [u8; SCREEN_BUFFER_SIZE] {
+    fn read_screen_buffer(&mut self) -> [u8; SCREEN_BUFFER_SIZE] {
         self.screen_buffer.set_position(0);
         let mut buffer = [0; SCREEN_BUFFER_SIZE];
         self.screen_buffer.read_exact(&mut buffer).unwrap();
@@ -214,27 +220,82 @@ impl Ppu {
         buffer
     }
 
-    fn clear_screen_buffer(&mut self) {
-        self.screen_buffer.set_position(0);
-        self.screen_buffer = Cursor::new(vec![0; SCREEN_BUFFER_SIZE])
+    fn flip_screen_buffer(&mut self) {
+        let buf = self.read_screen_buffer();
+        let mut guard = self.external_screen_buffer.lock().unwrap();
+        *guard = buf;
+
+        drop(guard);
+    }
+
+    pub fn read_vram(&mut self) -> [u8; SCREEN_BUFFER_SIZE] {
+        self.vram.set_position(0);
+        let mut buffer = [0; SCREEN_BUFFER_SIZE];
+
+        let mut tiles = vec![];
+        for i in 0u32..=256 {
+            tiles.push(self.get_tile(i as u8, false));
+        }
+
+        for i in 0u32..=128 {
+            tiles.push(self.get_tile(i as u8, true));
+        }
+
+        for (i, tile) in tiles.iter().enumerate() {
+            let pos_x = (i * 8) % SCREEN_WIDTH as usize;
+            let pos_y = (i * 8 / SCREEN_WIDTH as usize) * 8;
+
+            let corner_pos = pos_x + pos_y * SCREEN_WIDTH as usize;
+
+            for (index, pixel) in tile.iter().enumerate() {
+                let pos = corner_pos + (index % 8) + (index / 8 * SCREEN_WIDTH as usize);
+                if pos >= buffer.len() {
+                    continue;
+                }
+                buffer[pos] = self.index_to_color(*pixel, Palette::Obj0)
+            }
+        }
+
+        buffer
     }
 
     pub fn read_byte(&mut self, pos: u16) -> u8 {
+        if self.lcd_control.contains(LcdControl::LCD_ENABLE) && self.mode == VideoMode::VramRead {
+            dbg!("illegal vram read");
+            return 0xFF;
+        }
         self.vram.set_position((pos - VRAM_START) as u64);
         self.vram.read_u8().unwrap()
     }
 
     pub fn write_byte(&mut self, pos: u16, byte: u8) {
+        if self.lcd_control.contains(LcdControl::LCD_ENABLE) && self.mode == VideoMode::VramRead {
+            dbg!("illegal vram write");
+            return;
+        }
+
         self.vram.set_position((pos - VRAM_START) as u64);
         self.vram.write_u8(byte).unwrap();
     }
 
     pub fn read_byte_oam(&mut self, pos: u16) -> u8 {
+        if self.lcd_control.contains(LcdControl::LCD_ENABLE)
+            && (self.mode == VideoMode::OamRead || self.mode == VideoMode::VramRead)
+        {
+            dbg!("illegal oam read");
+            return 0xFF;
+        }
         self.oam.set_position((pos - OAM_START) as u64);
         self.oam.read_u8().unwrap()
     }
 
     pub fn write_byte_oam(&mut self, pos: u16, byte: u8) {
+        if self.lcd_control.contains(LcdControl::LCD_ENABLE)
+            && (self.mode == VideoMode::OamRead || self.mode == VideoMode::VramRead)
+        {
+            dbg!("illegal oam write");
+            return;
+        }
         self.oam.set_position((pos - OAM_START) as u64);
         self.oam.write_u8(byte).unwrap();
     }
@@ -309,7 +370,7 @@ impl Ppu {
     ///
     /// todo: implement wrapping
     fn draw_background(&mut self) {
-        let tile_map_row = (self.line as i64 - self.scy as i64) / 8;
+        let tile_map_row = (self.line as i64 + self.scy as i64) / 8;
         let tile_map_row = if tile_map_row < 0 {
             (32 - tile_map_row) as u64
         } else {
@@ -331,6 +392,7 @@ impl Ppu {
                 *tile_index,
                 !self.lcd_control.contains(LcdControl::WINDOW_BG_ADDRES_MODE),
             );
+
             let anchor_x = ((i as i64 % 32) * 8) - self.scx as i64;
             let anchor_y = tile_map_row as i64 * 8 - self.scy as i64;
 

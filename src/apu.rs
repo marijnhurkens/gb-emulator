@@ -413,15 +413,13 @@ impl ChannelSquare {
 
         self.sweep_div += 1;
 
-        if self.sweep_div == self.sweep_pace {
+        if self.sweep_div >= self.sweep_pace {
             self.sweep_div = 0;
 
             let step = self.timer.period / 2u32.pow(self.sweep_individual_step as u32);
             if self.sweep_direction == SweepDirection::Up {
-                dbg!("ch sweep up", step);
                 self.timer.period += step;
             } else {
-                dbg!("ch sweep down", step);
                 self.timer.period -= step;
             }
         }

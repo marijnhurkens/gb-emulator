@@ -37,6 +37,7 @@ bitflags! {
 
     struct SerialControl: u8 {
         const TRANSFER_START    = 0b10000000;
+        const CLOCK_SPEED       = 0b00000010;
         const SHIFT_CLOCK       = 0b00000001;
     }
 }
@@ -56,7 +57,7 @@ struct KeyState {
 pub struct Mmu {
     mbc: Box<dyn Mbc>,
     storage: Cursor<Vec<u8>>,
-    pub video: Ppu,
+    pub ppu: Ppu,
     pub apu: Apu,
     pub interrupt_flags: InterruptFlags,
     pub interrupt_enable: InterruptFlags,
@@ -76,10 +77,10 @@ pub struct Mmu {
 }
 
 impl Mmu {
-    pub fn new(mbc: Box<dyn Mbc>, apu: Apu, key_receiver: Receiver<KeyMessage>) -> Self {
+    pub fn new(mbc: Box<dyn Mbc>, apu: Apu, ppu: Ppu, key_receiver: Receiver<KeyMessage>) -> Self {
         Self {
             mbc,
-            video: Ppu::new(),
+            ppu,
             apu,
             key_state: KeyState::default(),
             key_receiver,
@@ -103,12 +104,12 @@ impl Mmu {
     pub fn read_byte(&mut self, pos: u16) -> u8 {
         match pos {
             0x0000..=0x7FFF => self.mbc.read_rom(pos),
-            VRAM_START..=0x9FFF => self.video.read_byte(pos),
+            VRAM_START..=0x9FFF => self.ppu.read_byte(pos),
             0xA000..=0xBFFF => self.read_byte_from_storage(pos),
             0xC000..=0xCFFF => self.read_byte_from_storage(pos),
             0xD000..=0xDFFF => self.read_byte_from_storage(pos),
             0xE000..=0xFDFF => self.read_byte_from_storage(pos - 0x2000),
-            0xFE00..=0xFE9F => self.video.read_byte_oam(pos),
+            0xFE00..=0xFE9F => self.ppu.read_byte_oam(pos),
             0xFEA0..=0xFEFF => {
                 event!(Level::ERROR, "Prohibited memory access {:#04X}", pos);
                 panic!();
@@ -138,11 +139,11 @@ impl Mmu {
     pub fn write_byte(&mut self, pos: u16, byte: u8) {
         match pos {
             0x0000..=0x7FFF => self.mbc.write_rom(pos, byte),
-            VRAM_START..=0x9FFF => self.video.write_byte(pos, byte),
+            VRAM_START..=0x9FFF => self.ppu.write_byte(pos, byte),
             0xA000..=0xBFFF => self.write_byte_to_storage(pos, byte), // ??
             0xC000..=0xDFFF => self.write_byte_to_storage(pos, byte), // wram
             0xE000..=0xFDFF => self.write_byte_to_storage(pos - 0x2000, byte), //echo ram
-            0xFE00..=0xFE9F => self.video.write_byte_oam(pos, byte),
+            0xFE00..=0xFE9F => self.ppu.write_byte_oam(pos, byte),
             0xFEA0..=0xFEFF => self.write_byte_to_storage(pos, byte), // not usable
             0xFF00..=0xFF07 => self.write_io_register(pos, byte),
             0xFF0F => self.write_interrupt_flags(byte),
@@ -257,13 +258,13 @@ impl Mmu {
                 //event!(Level::WARN, "Audio wave read, not implemented");
                 0
             }
-            0xFF40 => self.video.lcd_control.bits(),
-            0xFF41 => self.video.lcd_status.bits(),
-            0xFF42 => self.video.scy,
-            0xFF43 => self.video.scx,
+            0xFF40 => self.ppu.lcd_control.bits(),
+            0xFF41 => self.ppu.lcd_status.bits(),
+            0xFF42 => self.ppu.scy,
+            0xFF43 => self.ppu.scx,
             0xFF44 => {
-                self.video.line // LY, LCD y coordinate
-                                // 0x90
+                self.ppu.line // LY, LCD y coordinate
+                              // 0x90
             }
             0xFF45 => {
                 unimplemented!()
@@ -295,19 +296,23 @@ impl Mmu {
             0xFF07 => self.tac = TimerControl::from_bits(byte).unwrap(),
             0xFF10..=0xFF26 => self.apu.write_register(pos, byte),
             0xFF30..=0xFF3F => (), //event!(Level::WARN, "Audio wave write, not implemented"),
-            0xFF40 => self.video.lcd_control = LcdControl::from_bits(byte).unwrap(),
-            0xFF41 => self.video.lcd_status = LcdStatus::from_bits(byte & 0x78).unwrap(),
-            0xFF42 => self.video.scy = byte,
-            0xFF43 => self.video.scx = byte,
-            0xFF45 => self.video.lyc = byte,
+            0xFF40 => {
+                self.ppu.lcd_control = LcdControl::from_bits(byte).unwrap();
+            }
+            0xFF41 => self.ppu.lcd_status = LcdStatus::from_bits(byte & 0x78).unwrap(),
+            0xFF42 => self.ppu.scy = byte,
+            0xFF43 => self.ppu.scx = byte,
+            0xFF45 => self.ppu.lyc = byte,
             0xFF46 => self.oam_transfer(byte),
-            0xFF47 => self.video.bg_palette = byte,
-            0xFF48 => self.video.obj_0_palette = byte,
-            0xFF49 => self.video.obj_1_palette = byte,
-            0xFF4A => self.video.window_y = byte,
-            0xFF4B => self.video.window_x = byte,
+            0xFF47 => {
+                self.ppu.bg_palette = byte;
+            }
+            0xFF48 => self.ppu.obj_0_palette = byte,
+            0xFF49 => self.ppu.obj_1_palette = byte,
+            0xFF4A => self.ppu.window_y = byte,
+            0xFF4B => self.ppu.window_x = byte,
             0xFF4D => (), //event!(Level::WARN,"KEY1 prepare speed switch (CGB only) not supported"),
-            0xFF4F => self.video.bank_select = byte,
+            0xFF4F => self.ppu.bank_select = byte,
             0xFF50 => (), //event!(Level::WARN, "Disable boot rom, not implemented"),
             0xFF6A | 0xFF6B => (), //event!(Level::WARN, "CGB only not supported"),
             _ => {
@@ -331,7 +336,7 @@ impl Mmu {
         self.storage.set_position(source_start as u64);
         self.storage.read_exact(&mut buf).unwrap();
 
-        self.video.write_oam_transfer(&buf);
+        self.ppu.write_oam_transfer(&buf);
 
         // todo: implement 160 machine cycles
     }
@@ -352,7 +357,7 @@ impl Mmu {
 
         self.step_timers();
 
-        self.interrupt_flags = self.video.step(self.interrupt_flags);
+        self.interrupt_flags = self.ppu.step(self.interrupt_flags);
     }
 
     fn step_timers(&mut self) {
