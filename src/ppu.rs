@@ -139,6 +139,8 @@ impl Ppu {
 
         self.mode_step += 1;
 
+        let line_prev = self.line;
+
         match self.mode {
             VideoMode::OamRead => {
                 if self.mode_step >= 80 {
@@ -195,7 +197,7 @@ impl Ppu {
             }
         };
 
-        if self.line == self.lyc {
+        if line_prev != self.line && self.line == self.lyc {
             self.lcd_status |= LcdStatus::LYC;
             stat_interrupt |= LcdStatus::LYC_INTERRUPT;
         } else {
@@ -344,25 +346,85 @@ impl Ppu {
             .collect();
 
         // Objects with the lowest x coord have the highest priority.
-        // This means we should draw them last.
-        objects.sort_by(|a, b| b.1.cmp(&a.1));
+        objects.sort_by(|a, b| a.1.cmp(&b.1));
 
-        objects
-            .into_iter()
-            .for_each(|(y_pos, x_pos, index, attributes)| {
-                if self.lcd_control.contains(LcdControl::OBJ_SIZE) {
-                    if y_pos + 8 > self.line as i64 && y_pos <= self.line as i64 {
-                        let tile1 = self.get_tile(index & 0xFE, false);
-                        self.draw_tile(tile1, x_pos, y_pos, Some(attributes));
-                    } else if y_pos + 16 > self.line as i64 && y_pos + 8 <= self.line as i64 {
-                        let tile2 = self.get_tile(index | 0x01, false);
-                        self.draw_tile(tile2, x_pos, y_pos + 8, Some(attributes));
+        let objects_with_tiles: Vec<(i64, i64, ObjectAttributes, Tile)> = objects
+            .iter()
+            .map(|(x, y, index, attr)| {
+                let mut tile = if self.lcd_control.contains(LcdControl::OBJ_SIZE) {
+                    if (self.line as i64) <= y + 8 {
+                        self.get_tile(index & 0xFE, false)
+                    } else {
+                        self.get_tile(index | 0x01, false)
                     }
-                } else if y_pos + 8 > self.line as i64 && y_pos <= self.line as i64 {
-                    let tile = self.get_tile(index, false);
-                    self.draw_tile(tile, x_pos, y_pos, Some(attributes));
+                } else {
+                    self.get_tile(*index, false)
                 };
-            });
+
+                if attr.contains(ObjectAttributes::X_FLIP) {
+                    tile = Ppu::flip_tile_x(tile);
+                }
+
+                if attr.contains(ObjectAttributes::Y_FLIP) {
+                    tile = Ppu::flip_tile_y(tile);
+                }
+
+                (*x, *y, *attr, tile)
+            })
+            .collect();
+
+        // draw line
+        for x in 0..SCREEN_WIDTH as i64 {
+            for (y_pos, x_pos, attributes, tile) in &objects_with_tiles {
+                if x < *x_pos || x >= x_pos + 8 {
+                    continue;
+                }
+
+                // todo: handle lower tiles in double size
+                let pixel: u8 = tile[(x - x_pos + ((self.line as i64 - y_pos) * 8)) as usize % 64];
+
+                // on the first non-transparent pixel
+                if pixel == 0 {
+                    // go to next object
+                    continue;
+                }
+
+                // draw if not BG over OBJ
+                if attributes.contains(ObjectAttributes::BG_WINDOW_OVER_OBJ) {
+                    // keep bg or window
+                    break;
+                }
+
+                self.screen_buffer
+                    .set_position(self.line as u64 * SCREEN_WIDTH as u64 + x as u64);
+
+                let palette = if attributes.contains(ObjectAttributes::PALETTE) {
+                    Palette::Obj1
+                } else {
+                    Palette::Obj0
+                };
+
+                self.screen_buffer
+                    .write_u8(self.index_to_color(pixel, palette))
+                    .unwrap();
+
+                break;
+            }
+        }
+
+        // objects
+        //     .into_iter()
+        //     .for_each(|(y_pos, x_pos, index, attributes)| {
+        //         if self.lcd_control.contains(LcdControl::OBJ_SIZE) {
+        //             let tile1 = self.get_tile(index & 0xFE, false);
+        //             self.draw_tile(tile1, x_pos, y_pos, Some(attributes));
+        //             let tile2 = self.get_tile(index | 0x01, false);
+        //             self.draw_tile(tile2, x_pos, y_pos + 8, Some(attributes));
+        //         } else {
+        //             let tile = self.get_tile(index, false);
+        //             self.draw_tile(tile, x_pos, y_pos, Some(attributes));
+        //         };
+        //     });
     }
 
     /// This method draws the background tile map. The background is scrollable and will wrap
@@ -513,7 +575,7 @@ impl Ppu {
                 .collect()
         };
 
-        // objects are transparent
+        // objects are transparent, no object attributes means background or window
         if object_attributes.is_none() {
             let _ = self
                 .screen_buffer
@@ -584,6 +646,33 @@ impl Ppu {
             _ => panic!("Unknown color"),
         }
     }
+
+    fn flip_tile_x(tile: Tile) -> Tile {
+        let flipped: Tile = tile
+            .chunks(8)
+            .flat_map(|row| row.iter().rev())
+            .cloned()
+            .collect::<Vec<u8>>()
+            .try_into()
+            .unwrap();
+
+        flipped
+    }
+
+    fn flip_tile_y(tile: Tile) -> Tile {
+        let flipped: Tile = tile
+            .chunks(8)
+            .rev()
+            .flatten()
+            .cloned()
+            .collect::<Vec<u8>>()
+            .try_into()
+            .unwrap();
+
+        flipped
+    }
 }
+
+const TILE_SIZE: usize = 8 * 8;
 
 type Tile = [u8; 8 * 8];

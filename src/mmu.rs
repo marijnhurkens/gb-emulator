@@ -302,7 +302,9 @@ impl Mmu {
             0xFF41 => self.ppu.lcd_status = LcdStatus::from_bits(byte & 0x78).unwrap(),
             0xFF42 => self.ppu.scy = byte,
             0xFF43 => self.ppu.scx = byte,
-            0xFF45 => self.ppu.lyc = byte,
+            0xFF45 => {
+                self.ppu.lyc = byte;
+            }
             0xFF46 => self.oam_transfer(byte),
             0xFF47 => {
                 self.ppu.bg_palette = byte;

@@ -105,7 +105,7 @@ fn main() {
     tracing::subscriber::set_global_default(my_subscriber).expect("setting tracing default failed");
 
     // read rom file
-    let mut rom = File::open(&args.rom_file).unwrap();
+    let mut rom = File::open(&args.rom_file).expect("Can't open the rom file.");
     let mut data = vec![];
     rom.read_to_end(&mut data).unwrap();
     let cartridge = Cartridge::load_rom(data.clone());
@@ -248,12 +248,15 @@ fn setup_audio() -> (Stream, Arc<Mutex<VecDeque<i16>>>) {
         .default_output_device()
         .expect("no output device available");
 
-    let mut supported_configs_range = device
+    let supported_configs_range = device
         .supported_output_configs()
         .expect("error while querying configs");
+
     let supported_config = supported_configs_range
-        .next()
-        .expect("no supported config?!")
+        .filter(|config| config.max_sample_rate() == SampleRate(44_100))
+        .collect::<Vec<_>>()
+        .first()
+        .expect("no supported audio configs")
         .with_sample_rate(SampleRate(44_100));
     let sample_format = supported_config.sample_format();
     let config = supported_config.into();
