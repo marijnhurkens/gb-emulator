@@ -40,6 +40,7 @@ pub struct Ppu {
     pub obj_1_palette: u8,
     pub window_y: u8,
     pub window_x: u8,
+    window_ly: u8,
     pub bank_select: u8,
 }
 
@@ -124,6 +125,7 @@ impl Ppu {
             obj_1_palette: 0,
             window_y: 0,
             window_x: 0,
+            window_ly: 0,
             bank_select: 0,
         }
     }
@@ -189,6 +191,7 @@ impl Ppu {
                         self.flip_screen_buffer();
                         self.mode = VideoMode::OamRead;
                         self.line = 0;
+                        self.window_ly = 0;
                         self.lcd_status &= !LcdStatus::ALL_MODE_FLAGS;
                         self.lcd_status |= LcdStatus::OAM;
                         stat_interrupt |= LcdStatus::OAM_INTERRUPT;
@@ -310,7 +313,7 @@ impl Ppu {
     fn draw_line(&mut self) {
         if self.lcd_control.contains(LcdControl::WINDOW_BG_DISPLAY) {
             self.draw_background();
-            if self.lcd_control.contains(LcdControl::WINDOW_ENABLE) {
+            if self.lcd_control.contains(LcdControl::WINDOW_ENABLE) && self.window_x <= 166 {
                 self.draw_window();
             }
         }
@@ -350,9 +353,9 @@ impl Ppu {
 
         let objects_with_tiles: Vec<(i64, i64, ObjectAttributes, Tile)> = objects
             .iter()
-            .map(|(x, y, index, attr)| {
+            .map(|(y, x, index, attr)| {
                 let mut tile = if self.lcd_control.contains(LcdControl::OBJ_SIZE) {
-                    if (self.line as i64) <= y + 8 {
+                    if (self.line as i64) <= y + 8 && !attr.contains(ObjectAttributes::Y_FLIP) {
                         self.get_tile(index & 0xFE, false)
                     } else {
                         self.get_tile(index | 0x01, false)
@@ -369,7 +372,7 @@ impl Ppu {
                     tile = Ppu::flip_tile_y(tile);
                 }
 
-                (*x, *y, *attr, tile)
+                (*y, *x, *attr, tile)
             })
             .collect();
 
@@ -389,14 +392,15 @@ impl Ppu {
                     continue;
                 }
 
-                // draw if not BG over OBJ
-                if attributes.contains(ObjectAttributes::BG_WINDOW_OVER_OBJ) {
-                    // keep bg or window
+                let buffer_pos = self.line as u64 * SCREEN_WIDTH as u64 + x as u64;
+                self.screen_buffer.set_position(buffer_pos);
+
+                // if BG over OBJ is set AND the BG doesn't have color index 0 we shouldn't draw OBJ
+                if attributes.contains(ObjectAttributes::BG_WINDOW_OVER_OBJ)
+                    && self.screen_buffer.read_u8().unwrap() != self.index_to_color(0, Palette::Bg)
+                {
                     break;
                 }
-
-                self.screen_buffer
-                    .set_position(self.line as u64 * SCREEN_WIDTH as u64 + x as u64);
 
                 let palette = if attributes.contains(ObjectAttributes::PALETTE) {
                     Palette::Obj1
@@ -404,6 +408,7 @@ impl Ppu {
                     Palette::Obj0
                 };
 
+                self.screen_buffer.set_position(buffer_pos);
                 self.screen_buffer
                     .write_u8(self.index_to_color(pixel, palette))
                     .unwrap();
@@ -411,20 +416,6 @@ impl Ppu {
                 break;
             }
         }
-
-        // objects
-        //     .into_iter()
-        //     .for_each(|(y_pos, x_pos, index, attributes)| {
-        //         if self.lcd_control.contains(LcdControl::OBJ_SIZE) {
-        //             let tile1 = self.get_tile(index & 0xFE, false);
-        //             self.draw_tile(tile1, x_pos, y_pos, Some(attributes));
-        //             let tile2 = self.get_tile(index | 0x01, false);
-        //             self.draw_tile(tile2, x_pos, y_pos + 8, Some(attributes));
-        //         } else {
-        //             let tile = self.get_tile(index, false);
-        //             self.draw_tile(tile, x_pos, y_pos, Some(attributes));
-        //         };
-        //     });
     }
 
     /// This method draws the background tile map. The background is scrollable and will wrap
@@ -456,7 +447,8 @@ impl Ppu {
             );
 
             let anchor_x = ((i as i64 % 32) * 8) - self.scx as i64;
-            let anchor_y = tile_map_row as i64 * 8 - self.scy as i64;
+            //let anchor_y = tile_map_row as i64 * 8 - self.scy as i64;
+            let anchor_y = ((self.line / 8) * 8) as i64;
 
             self.draw_tile(tile, anchor_x, anchor_y, None);
 
@@ -469,12 +461,26 @@ impl Ppu {
     /// The window is just tile map which can be drawn as a rectangle. It can be positioned
     /// but it will not wrap around. It has no transparency so the use is limited.
     fn draw_window(&mut self) {
-        let tile_map_row = (self.line as i64 - self.window_y as i64) / 8;
-        if tile_map_row < 0 {
+        if self.line < self.window_y {
             return;
         }
-        self.vram
-            .set_position((TILE_MAP_2_START - VRAM_START) as u64 + tile_map_row as u64 * 32);
+
+        let tile_map_row = self.window_ly as i64 / 8;
+        self.window_ly += 1;
+
+        //dbg!(self.line, self.window_ly, self.window_x);
+
+        let tile_map_start = if self.lcd_control.contains(LcdControl::WINDOW_TILE_MAP) {
+            TILE_MAP_2_START
+        } else {
+            TILE_MAP_1_START
+        };
+
+        let vram_pos = (tile_map_start - VRAM_START) as u64 + tile_map_row as u64 * 32;
+
+        //println!("{:#4X}",(tile_map_start) as u64 + tile_map_row as u64 * 32);
+
+        self.vram.set_position(vram_pos);
         let mut tile_map = [0; 32];
         self.vram.read_exact(&mut tile_map).unwrap();
 
@@ -484,7 +490,7 @@ impl Ppu {
                 !self.lcd_control.contains(LcdControl::WINDOW_BG_ADDRES_MODE),
             );
             let anchor_x = ((i as i64 % 32) * 8) + self.window_x as i64 - 7;
-            let anchor_y = tile_map_row * 8 + self.window_y as i64;
+            let anchor_y = ((self.line / 8) * 8) as i64;
 
             self.draw_tile(tile, anchor_x, anchor_y, None);
         });
