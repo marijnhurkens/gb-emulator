@@ -269,6 +269,10 @@ impl Mmu {
             0xFF45 => {
                 unimplemented!()
             }
+            0xFF48 => self.ppu.obj_0_palette,
+            0xFF49 => self.ppu.obj_1_palette,
+            0xFF4A => self.ppu.window_y,
+            0xFF4B => self.ppu.window_x,
             0xFF4D => {
                 // CGB speed switch
                 0xFF

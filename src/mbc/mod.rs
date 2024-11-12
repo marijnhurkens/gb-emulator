@@ -3,9 +3,12 @@ use tracing::{event, Level};
 use crate::cartridge::Cartridge;
 use crate::mbc::mbc0::Mbc0;
 use crate::mbc::mbc1::Mbc1;
+use crate::mbc::mbc3::Mbc3;
 
 mod mbc0;
 mod mbc1;
+
+mod mbc3;
 
 pub trait Mbc: Send {
     fn read_rom(&mut self, pos: u16) -> u8;
@@ -25,6 +28,7 @@ pub fn from_cartridge(cartridge: Cartridge) -> Box<dyn Mbc> {
     match cartridge.header.cartridge_type {
         0x00 => Box::new(Mbc0::new(cartridge.data)),
         0x01..=0x03 => Box::new(Mbc1::new(cartridge.data, cartridge.header.rom_size)),
+        0x0F..=0x13 => Box::new(Mbc3::new(cartridge.data, cartridge.header.rom_size)),
         _ => panic!(
             "Unknown cartridge type {:#04X}",
             cartridge.header.cartridge_type

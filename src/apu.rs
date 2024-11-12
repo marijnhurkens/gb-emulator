@@ -167,6 +167,28 @@ impl Apu {
                 (self.channel_square_one.duty << 6)
                     | (self.channel_square_one.length_timer & 0b00111111)
             }
+            0xFF12 => {
+                self.channel_square_one.envelope_initial << 4
+                    | self.channel_square_one.envelope_direction.as_u8() << 3
+                    | self.channel_square_one.sweep_pace
+            }
+            0xFF13 => (self.channel_square_one.timer.period & 0xff) as u8,
+            0xFF14 => self.channel_square_one.length_timer_enabled.as_u8() << 6,
+
+            // no channel 2 period reg
+            0xff16 => {
+                (self.channel_square_two.duty << 6)
+                    | (self.channel_square_two.length_timer & 0b00111111)
+            }
+            0xFF17 => {
+                self.channel_square_two.envelope_initial << 4
+                    | self.channel_square_two.envelope_direction.as_u8() << 3
+                    | self.channel_square_two.sweep_pace
+            }
+            0xFF18 => (self.channel_square_two.timer.period & 0xff) as u8,
+            0xFF19 => self.channel_square_two.length_timer_enabled.as_u8() << 6,
+
+            0xFF24 => self.master_volume.volume_left << 4 | self.master_volume.volume_right,
             0xff25 => self.channel_panning.bits(),
             0xff26 => {
                 self.master_control.bits()

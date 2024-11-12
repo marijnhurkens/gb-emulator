@@ -96,6 +96,7 @@ bitflags! {
         const Y_FLIP                = 0b01000000;
         const X_FLIP                = 0b00100000;
         const PALETTE               = 0b00010000;
+        const CGB_BANK              = 0b00001000;
     }
 }
 
@@ -335,7 +336,7 @@ impl Ppu {
                     object[0] as i64 - 16,
                     object[1] as i64 - 8,
                     object[2],
-                    ObjectAttributes::from_bits(object[3]).unwrap(),
+                    ObjectAttributes::from_bits(object[3] & 0xF8).unwrap(),
                 )
             })
             .filter(|(y_pos, _, _, _)| {
